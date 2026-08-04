@@ -2,3 +2,9 @@ python-telegram-bot[job-queue]==21.4
 Pillow==12.3.0
 aiohttp==3.10.5
 httpx==0.27.2
+
+# Optional: voice transcription in grace period (bot/media.py: transcribe_voice).
+# Graceful no-op if not installed — voice messages fall back to admin-notify.
+# Adds ~150 MB to the image (ctranslate2 + Whisper base model downloaded on
+# first use to ~/.cache/huggingface).  Uncomment to enable:
+# faster-whisper==1.1.1

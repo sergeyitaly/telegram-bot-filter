@@ -76,6 +76,13 @@ _user_text_buffer: dict[tuple[int, int], collections.deque] = {}
 _CONTEXT_WINDOW_SECONDS = 30
 _CONTEXT_MAX_MESSAGES = 5
 
+# Per-user media rate limit — prevents a message flood from swamping ffmpeg
+# or the OCR pipeline.  In-memory only (restarts reset it; that's fine, the
+# window is short).
+_media_rate: dict[tuple[int, int], list[float]] = {}
+_RATE_MEDIA_MAX = 5        # max expensive media ops per user per window
+_RATE_MEDIA_WINDOW = 60.0  # seconds
+
 # Chats self-activated at runtime (auto-registered when a verified admin
 # adds the bot, or via /addadmin), plus their admins. Merged with the
 # env-configured CHAT_ADMINS at lookup time.
@@ -192,6 +199,19 @@ def get_user_context(chat_id: int, user_id: int, new_text: str) -> str:
     if len(buf) > _CONTEXT_MAX_MESSAGES:
         buf.popleft()
     return " ".join(t for _, t in buf)
+
+
+def check_media_rate(chat_id: int, user_id: int) -> bool:
+    """Return True if this user is within the rate limit for expensive media
+    processing (OCR / ffmpeg blur).  Return False if they are flooding —
+    caller should delete the message without expensive processing."""
+    key = (chat_id, user_id)
+    now = time.monotonic()
+    times = _media_rate.get(key, [])
+    times = [t for t in times if now - t < _RATE_MEDIA_WINDOW]
+    times.append(now)
+    _media_rate[key] = times
+    return len(times) <= _RATE_MEDIA_MAX
 
 
 def record_violation(chat_id: int, user_id: int, window_seconds: int) -> int:

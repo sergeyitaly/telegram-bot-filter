@@ -628,6 +628,10 @@ async def on_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # Forwarded messages: PTB delivers message.text / message.photo / etc. for
+    # the FORWARDED CONTENT, not the forwarder's own text.  forward_origin is
+    # just metadata about the source.  No special handling needed — the same
+    # handler catches both original and forwarded messages transparently.
     msg = update.effective_message
     chat_id = update.effective_chat.id
     st = state.get(chat_id)
@@ -664,11 +668,16 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Voice/audio messages: delete during active alarm (no transcription available
-    so we can't know the content); DM-alert admins during grace period."""
+    """Voice/audio messages.
+
+    During active alarm: delete unconditionally.
+    During grace period: transcribe with faster-whisper (if installed) and
+    classify the transcript; fall back to admin-notify if not available.
+    """
     msg = update.effective_message
     chat_id = update.effective_chat.id
     st = state.get(chat_id)
+
     if st.alarm_active:
         try:
             await msg.delete()
@@ -678,13 +687,45 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         log.info("deleted voice/audio in chat %s during alarm", chat_id)
         await _warn(update)
         await _track_violation(update, context, "voice/audio during active alarm", "[audio]")
-    elif _strict_mode(chat_id, st):
-        username = msg.from_user.username if msg.from_user else None
-        await _notify_admins(
-            context, chat_id,
-            f"🎙 @{username or '?'} надіслав голосове/аудіо під час вікна "
-            f"фільтрації — перевірте вміст вручну, автотранскрипція відсутня.",
-        )
+        return
+
+    if not _strict_mode(chat_id, st):
+        return
+
+    # Grace period — try to transcribe and classify.
+    transcript = ""
+    voice_or_audio = msg.voice or msg.audio
+    if voice_or_audio:
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "voice.ogg")
+            try:
+                tg_file = await voice_or_audio.get_file()
+                await tg_file.download_to_drive(src)
+                transcript = await asyncio.to_thread(media.transcribe_voice, src)
+            except Exception:
+                log.debug("could not download voice for transcription in chat %s", chat_id)
+
+    if transcript:
+        verdict = classify.classify_text(transcript, strict=True)
+        if verdict.flagged:
+            try:
+                await msg.delete()
+            except Exception:
+                log.exception("failed to delete voice after transcription flag")
+                return
+            await _warn(update)
+            await _track_violation(update, context, f"voice: {verdict.reason}",
+                                   transcript[:200])
+            return
+
+    username = msg.from_user.username if msg.from_user else None
+    note = " — транскрипцію перевірено, порушень не виявлено" if transcript \
+        else " — автотранскрипція недоступна (faster-whisper не встановлено)"
+    await _notify_admins(
+        context, chat_id,
+        f"🎙 @{username or '?'} надіслав голосове/аудіо під час вікна "
+        f"фільтрації{note}. Перевірте вручну.",
+    )
 
 
 async def on_alarm_catchall(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -738,6 +779,18 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # Not flagged by caption/alarm and not in strict mode — nothing to do.
     if not verdict.flagged and not strict:
+        return
+
+    # Rate limit: if this user is flooding photos, skip OCR/blur and just delete.
+    # Prevents a 1000-photo flood from swamping the processing pipeline.
+    if msg.from_user and not state.check_media_rate(chat_id, msg.from_user.id):
+        if verdict.flagged:
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+            await _warn(update)
+            await _track_violation(update, context, "photo flood (rate limited)", "[rate limited]")
         return
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -850,18 +903,37 @@ async def _blur_flagged_document(
 
 async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """A document is Telegram's "send without compression" path — the same
-    photo/video content, just a different message type, and previously
-    invisible to this bot entirely (no handler existed at all). Route
-    image/video documents through the same blur pipeline as native
-    photos/videos; anything else gets classified on caption + filename
-    (a suspicious filename is its own leak) and deleted outright, since
-    there's no way to blur an arbitrary file."""
+    photo/video content, just a different message type. Also covers arbitrary
+    files (zip, pdf, etc.) that can carry embedded GPS data or coordinates in
+    filenames.
+
+    During active alarm: delete ALL documents immediately without attempting
+    classification or blur — any file type can leak data, and the alarm
+    lockdown should have prevented this from being sent at all.
+
+    Outside alarm: classify by caption/filename, route image/video through
+    the blur pipeline, delete other/oversized files outright.
+    """
     msg = update.effective_message
     doc = msg.document
     chat_id = update.effective_chat.id
     st = state.get(chat_id)
     caption_or_name = msg.caption or doc.file_name or ""
-    verdict = classify.classify_media(caption_or_name, st.alarm_active, _strict_mode(chat_id, st))
+
+    if st.alarm_active:
+        try:
+            await msg.delete()
+        except Exception:
+            log.exception("failed to delete document during alarm")
+            return
+        await _warn(update)
+        log.info("deleted document %r in chat %s during alarm", caption_or_name, chat_id)
+        await _track_violation(update, context, "document during active alarm",
+                               caption_or_name or "[document]")
+        return
+
+    strict = _strict_mode(chat_id, st)
+    verdict = classify.classify_media(caption_or_name, False, strict)
     if not verdict.flagged:
         return
 
@@ -891,6 +963,16 @@ async def on_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     st = state.get(chat_id)
     verdict = classify.classify_media(msg.caption or "", st.alarm_active, _strict_mode(chat_id, st))
     if not verdict.flagged:
+        return
+
+    # Rate limit: prevent ffmpeg being flooded with concurrent video blurs.
+    if msg.from_user and not state.check_media_rate(chat_id, msg.from_user.id):
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+        await _warn(update)
+        await _track_violation(update, context, "video flood (rate limited)", "[rate limited]")
         return
 
     if video.file_size and video.file_size > MAX_VIDEO_MB * 1024 * 1024:
