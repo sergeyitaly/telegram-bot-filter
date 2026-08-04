@@ -127,16 +127,52 @@ print(v.flagged, v.reason)  # True, "coordinates shared"
 | Attack | Status |
 |---|---|
 | Animation/GIF type missing | FIXED — catch-all handler in group 1 |
-| Poll/Venue/Sticker missing | FIXED — explicit handlers registered |
-| Map URL bypass | FIXED — URL regex in classify_text |
-| DMS coordinate format | FIXED — _DMS_RE and _PLUS_CODE_RE added |
-| Voice messages unfiltered | FIXED — deleted during alarm, admin-notified during grace |
-| Split coordinates across messages | MITIGATED — 30s sliding context window per user |
-| Unicode math/tag block bypass | FIXED — extended _normalize() |
-| 60-second alarm gap | MITIGATED — ALERTS_POLL_SECONDS default lowered to 15 |
-| Admin social engineering | PARTIAL — audit log for admin-posted flagged content |
-| Telegram Stories | NOT FIXABLE — Bot API limitation; document only |
-| Userbot scrapers | PARTIAL — join restrictions during alarm |
+| Poll/Venue/Sticker/Animation missing | FIXED — Animation→on_video, Voice→on_voice, POLL/Sticker→catch-all; `filters.LOCATION` catches Venue too |
+| Map URL bypass | FIXED — `_MAP_URL_RE` in `keywords.py`, checked unconditionally in `classify_text` |
+| DMS / Plus Code coordinate formats | FIXED — `_DMS_RE` and `_PLUS_CODE_RE` in `keywords.py` |
+| Generic URL link-preview bypass | FIXED — `_URL_RE` blocks https:// during active alarm only |
+| Voice messages unfiltered | FIXED — deleted during alarm + violation logged; admin-notified during grace |
+| Split coordinates across messages | FIXED — 30s/5-msg sliding context window via `state.get_user_context()` |
+| Unicode math/tag block/emoji-digit bypass | FIXED — extended `_normalize()` |
+| 60-second alarm gap | FIXED — `ALERTS_POLL_SECONDS` default lowered to 15 |
+| Admin silent exemption | FIXED — admin-posted flagged content logged + other admins notified |
+| Telegram Stories | NOT FIXABLE — Bot API limitation |
+| Userbot scrapers | PARTIAL — join restrictions during alarm; no API solution |
+
+**filters.Venue.ALL does not exist in PTB 21.x.** Venue messages set `message.location`, so `filters.LOCATION` already catches them. Never use `filters.Venue.ALL`.
+
+---
+
+## Custom slash commands
+
+Invoke these in any Claude Code session inside this repo:
+
+| Command | Purpose |
+|---|---|
+| `/security-audit` | Red-team audit of recent changes; updates attack surface table |
+| `/filter-test` | Run battery of classify_text / normalize / coordinate tests |
+| `/update-docs` | Sync CLAUDE.md, SKILL.md, and README after significant changes |
+
+---
+
+## Keeping this skill current
+
+**After every significant PR or set of changes, run `/update-docs` to sync agent files and push.**
+
+This skill file, CLAUDE.md, and README are loaded at session start. Stale context causes future sessions to make wrong assumptions. The rule:
+
+1. Make code changes
+2. Run `/update-docs` (or manually edit this file + CLAUDE.md + README)
+3. `git add .claude/skills/telegram-bot-filter/SKILL.md CLAUDE.md README.md`
+4. Commit + push
+
+Things that MUST trigger a skill update:
+- New message type handled (add to architecture table + attack surface table)
+- New PTB filter gotcha discovered (add a "never do X" note like the Venue one above)
+- New command added (update architecture quick reference)
+- New env var added (update CLAUDE.md env vars table)
+- New attack vector found or fixed (update attack surface table)
+- New custom slash command added (update commands table above)
 
 ---
 

@@ -5,25 +5,49 @@ posted during/after drone or missile strikes that could help an attacker
 confirm a hit or correct aim for a follow-up strike:
 
 - **Text**: deletes messages containing strike-result keywords (приліт,
-  влучання, наслідки удару, etc.) or address/location chatter, while alarm
-  mode is active **or** within `POST_ALARM_GRACE_SECONDS` after it ends
-  (default 2h) — so a chat isn't permanently barred from ever discussing a
-  past strike once the sensitive window has passed. Shared coordinates are
-  deleted unconditionally, any time — that's a direct location leak, not a
-  timing-sensitive one.
+  влучання, наслідки удару, бавовна, шахед, прилетіло, жахнуло, etc.) or
+  address/location chatter, while alarm mode is active **or** within
+  `POST_ALARM_GRACE_SECONDS` after it ends (default 2h). Shared coordinates
+  are deleted **unconditionally at all times** — that's a direct location leak,
+  not a timing-sensitive one. Detected formats: decimal degrees (`50.45,30.52`),
+  degrees-minutes-seconds (`50°27'N 30°31'E`), and Google Plus Codes (`8G7G+XH`).
+  Map service URLs (Google Maps, Waze, OpenStreetMap, Apple Maps, etc.) are
+  also blocked unconditionally. During an active alarm, all HTTPS links are
+  blocked because Telegram's server-side link preview reveals article content
+  before the message can be deleted.
 - **Photos/videos**: while alarm mode is on, every photo/video in the chat is
   deleted and reposted **blurred** with a warning. Outside an active alarm
   (including during the grace window), only media whose caption matches
   strike-result keywords or coordinates is blurred.
-- **Live location**: always deleted immediately.
+- **Animations (GIF)**: same pipeline as video — blurred during alarm,
+  deleted/blurred if caption is flagged outside alarm.
+- **Voice and audio**: deleted unconditionally during active alarm (no
+  transcription available); chat admins are notified for manual review during
+  the grace period.
+- **Live location and venue**: always deleted immediately. Telegram venue
+  messages (a named place shared from the attachment menu) are treated
+  identically to live location — they set the same `location` field that
+  the bot already monitors.
+- **Polls**: deleted during active alarm via the deny-by-default catch-all
+  (poll text can describe strike locations or damage).
+- **Edited messages**: re-scanned through the full classification pipeline.
+  Editing a flagged message after posting is not a bypass.
+- **Deny-by-default catch-all**: during active alarm any message type not
+  explicitly handled is deleted. Future Telegram API additions cannot silently
+  create a bypass.
+- **Split messages**: a 30-second sliding context window per user detects
+  coordinates or keywords split deliberately across two or three messages.
 - **Unauthorized bots**: any bot account that joins without being whitelisted
-  via `/allowbot` is kicked immediately — another bot in the chat can scrape
-  messages independently of us, so it's removed rather than raced. This can't
-  detect human-operated "userbot" scraper accounts; Telegram doesn't expose
-  that distinction to the Bot API.
+  via `/allowbot` is kicked immediately. This cannot detect human-operated
+  "userbot" scraper accounts; Telegram doesn't expose that distinction to the
+  Bot API.
 - **Repeat offenders**: a member who trips the filter `VIOLATION_THRESHOLD`
   times within `VIOLATION_WINDOW_SECONDS` is auto-muted pending admin review
   (`/unmute <user_id>` to lift it).
+- **Admin-posted flagged content**: bot admins are exempt from auto-deletion,
+  but if an admin posts something that matches the filter, the chat's other
+  admins are DM-notified. Admin accounts are a higher-value social-engineering
+  target, so blind exemption is not safe.
 
 Whether alarm mode is on/off is posted **publicly in the group** on every
 change — the underlying fact (an active air-raid alert) is already public
@@ -49,6 +73,37 @@ regular members can't send media **at all** while active — nothing to leak.
 Text stays reactive (keyword-filtered on delete) so coordination is still
 possible during an alert. Admins/the chat owner are always exempt from chat
 permissions by Telegram design, so this only restricts non-admin members.
+
+The lockdown permissions are re-applied on every auto-alarm poll tick, so a
+native Telegram admin silently overriding them is corrected automatically on
+the next tick.
+
+## Commands
+
+### Chat admin commands
+(`/alarm_on`, `/alarm_off`, `/status`, `/addkeyword`, `/addadmin`,
+`/removeadmin`, `/unmute`, `/violations`, `/activate`)
+
+| Command | What it does |
+|---|---|
+| `/alarm_on` | Activates alarm mode: locks media send permissions chat-wide, starts keyword filtering |
+| `/alarm_off` | Deactivates alarm mode: restores pre-alarm permissions, begins 2h grace window |
+| `/status` | DMs the calling admin with current alarm on/off state |
+| `/addkeyword <term> [location]` | Adds a term to the strike-result list (or location list with `location` flag) |
+| `/addadmin <user_id>` | Grants another user bot-admin rights in this chat |
+| `/removeadmin <user_id>` | Revokes a previously added bot admin. Global owners can only be removed by other owners |
+| `/unmute <user_id>` | Lifts an auto-mute placed by the repeat-offender logic |
+| `/violations [user_id]` | DMs the calling admin the audit log for this chat (or one user) |
+| `/activate` | Re-registers this chat if its registration was lost after a restart |
+
+### Owner-only commands
+(`/listkeywords`, `/mychats`, `/allowbot`)
+
+| Command | What it does |
+|---|---|
+| `/listkeywords` | DMs the full keyword list to the calling owner only — never shown in group |
+| `/mychats` | DMs the list of every authorized chat with title and admin IDs |
+| `/allowbot <bot_id>` | Whitelists a bot account so it isn't auto-kicked when joining |
 
 ## Local setup
 
@@ -131,7 +186,7 @@ start, and a drone strike can hit with no siren warning at all.
    raions). `ALERTS_OBLAST_UID` is comma-separated, alarm arms if *any*
    listed UID has an active air-raid alert.
 3. Set `ALERTS_API_TOKEN` and `ALERTS_OBLAST_UID` (and optionally
-   `ALERTS_POLL_SECONDS`, default 60).
+   `ALERTS_POLL_SECONDS`, default **15 seconds**).
 
 Every poll re-syncs every chat the bot is in to the current real-world
 state — not just on a state *change* — so a chat that joins mid-alert, or a
@@ -140,6 +195,10 @@ rather than waiting for the alert to toggle off and on again. One
 consequence: a manual `/alarm_off` during a still-ongoing real alert gets
 re-armed on the next tick — this is intentional (favors not missing a real
 threat over honoring a stale manual override), not a bug.
+
+The poller also re-applies the media lockdown permissions on every tick for
+active-alarm chats, correcting any override a native Telegram admin may have
+applied between ticks.
 
 Alarm mode set by the poller (`auto_armed`) auto-clears when the real alert
 ends. Alarm mode set manually via `/alarm_on` only clears via manual
@@ -157,9 +216,9 @@ without their admins seeing each other's activity, and without you having to
 hand-configure every group yourself:
 
 - Each chat's admins can run `/alarm_on`, `/alarm_off`, `/status`,
-  `/addkeyword`, `/unmute`, `/activate`, `/addadmin`, and `/violations`
-  **only in their own chat**, and only get DMs about their own chat's
-  alarm/violation activity — never another group's.
+  `/addkeyword`, `/unmute`, `/activate`, `/addadmin`, `/removeadmin`, and
+  `/violations` **only in their own chat**, and only get DMs about their own
+  chat's alarm/violation activity — never another group's.
 - **`OWNER_IDS`** (you, the deployer) are admin in every chat and are the
   only ones told about bot-wide security events, like someone who isn't an
   admin trying to add the bot somewhere.
@@ -194,7 +253,8 @@ trust can activate the bot in their own group entirely on their own:
    awareness. If no (a non-admin member added it): it leaves immediately
    and DMs the owners who tried.
 4. That admin can add co-admins for their group with `/addadmin <user_id>`
-   — independently, no owner involvement.
+   and revoke them with `/removeadmin <user_id>` — independently, no owner
+   involvement.
 
 Self-registered admins survive a restart if `UPSTASH_REDIS_REST_URL`/`_TOKEN`
 are set (see [Persisting state across restarts](#persisting-state-across-restarts)
@@ -218,12 +278,15 @@ no persistent TCP connection to manage) so it survives:
    before — nothing else changes, the bot just re-loses this state on every
    restart like it always did.
 
+State is stored as individual per-chat keys (`chat_state:{chat_id}`) rather
+than a shared blob, so concurrent alarm activations across different chats
+cannot race and overwrite each other.
+
 What's deliberately **not** persisted: the short-window per-user violation
 *counter* used for auto-mute (window is minutes, not worth the write
-traffic) and which chats the bot has recently seen a message in
-(`known_chats`, rebuilt automatically the moment any message arrives —
-self-claimed chats are seeded into it immediately on hydration since
-they're already in the persisted admin list).
+traffic), the per-user sliding text context window (30s, always in-memory),
+and which chats the bot has recently seen a message in (`known_chats`,
+rebuilt automatically the moment any message arrives).
 
 The violation *audit log* (see
 [Reviewing repeat offenders](#reviewing-repeat-offenders) below) is a
@@ -232,11 +295,11 @@ regardless of the short-window counter above.
 
 ## Reviewing repeat offenders
 
-Every flagged message (text, photo, video, live location) is appended to a
-durable per-chat log — timestamp, user id/username, matched reason, and the
-message text or caption (**never the photo/video itself** — storing copies
-of exactly the content this bot exists to suppress would just create a new
-leak vector if that log were ever compromised). Requires
+Every flagged message (text, photo, video, voice, live location, etc.) is
+appended to a durable per-chat log — timestamp, user id/username, matched
+reason, and the message text or caption (**never the photo/video itself** —
+storing copies of exactly the content this bot exists to suppress would just
+create a new leak vector if that log were ever compromised). Requires
 `UPSTASH_REDIS_REST_URL` to actually persist; without it the log still
 works but resets on every restart like everything else in-memory.
 
@@ -252,6 +315,11 @@ works but resets on every restart like everything else in-memory.
   `VIOLATION_THRESHOLD`'s short-window auto-mute — it's meant to surface a
   *pattern* across many separate alarms (someone who posts once per alert
   but does it at every single one) rather than a single burst.
+- **Admin audit**: if a bot admin posts content that matches the filter
+  (e.g. coordinates, strike keywords), they are exempt from auto-deletion
+  but the chat's other admins receive a DM notification. Admin accounts
+  are a higher-value social-engineering target, so silent exemption is not
+  safe.
 - By default the bot never escalates anything itself — this is an audit
   trail for a human to review and decide, e.g., whether to report a
   suspected spotter to the police. That decision, and any contact with
@@ -294,6 +362,16 @@ downtime in the first place (see "Keeping it awake" above).
   is hardcoded in `bot/keywords.py` on the next redeploy/restart, with no
   warning when that happens.
 - Edit `bot/keywords.py` directly for a permanent change, then redeploy.
+- The filter normalizes text before matching: NFKC normalization, Latin
+  homoglyph → Cyrillic substitution (e.g. Latin `a` → Cyrillic `а`), zero-width
+  and bidirectional control character stripping, Unicode tag block stripping
+  (U+E0000–U+E007F), and emoji digit decoding. This means bypass attempts
+  using lookalike letters or invisible spacers are caught by the same patterns
+  as regular text.
+- Coordinate detection covers decimal degrees (`50.45,30.52`), degrees-
+  minutes-seconds (`50°27'N 30°31'E`), and Google Plus Codes (`8G7G+XH`).
+- Map service URLs (Google Maps, Waze, OpenStreetMap, Apple Maps, Yandex Maps,
+  2GIS, Maps.me) are detected and blocked unconditionally like coordinates.
 - `PHOTO_BLUR_RADIUS` / `VIDEO_BLUR_STRENGTH` env vars control how heavy the
   blur is (higher = less recoverable detail).
 - `MAX_VIDEO_MB` skips blurring (falls back to plain delete) above this size,
@@ -302,7 +380,10 @@ downtime in the first place (see "Keeping it awake" above).
   auto-muting sensitivity (default: mute after 3 hits in 10 minutes).
 - `POST_ALARM_GRACE_SECONDS` (default 7200 = 2h) controls how long keyword
   filtering keeps applying after alarm mode turns off. Set to `0` for
-  filtering to stop the instant alarm mode ends; coordinates are unaffected
-  either way — always blocked.
+  filtering to stop the instant alarm mode ends; coordinates and map URLs are
+  unaffected either way — always blocked.
+- `ALERTS_POLL_SECONDS` (default **15**) controls how often the alerts.in.ua
+  API is polled. Lower values reduce the window between a real alert starting
+  and the bot arming; the API is lightweight and 15 seconds is safe.
 - `TRUSTED_BOT_IDS` (or runtime `/allowbot <bot_id>`) whitelists bot accounts
   that should be allowed to join without being auto-kicked.
