@@ -11,6 +11,13 @@ BOT_TOKEN = os.environ["BOT_TOKEN"]
 # Telegram user IDs allowed to run /alarm_on, /alarm_off, /addkeyword, /removekeyword.
 ADMIN_IDS = _int_list(os.environ.get("ADMIN_IDS", ""))
 
+# Chat IDs this bot is allowed to operate in. If set, the bot auto-leaves any
+# other chat it's added to (and DMs the admins who added it) instead of
+# filtering there — this is a single deployed bot with one token, so anyone
+# could otherwise add it to their own group and probe how the filter reacts.
+# Leave empty to allow any chat (fine for a private test deployment).
+ALLOWED_CHAT_IDS = _int_list(os.environ.get("ALLOWED_CHAT_IDS", ""))
+
 # Bot accounts allowed to join without being auto-kicked (e.g. other moderation
 # bots you deliberately add). Extendable at runtime via /allowbot.
 TRUSTED_BOT_IDS = _int_list(os.environ.get("TRUSTED_BOT_IDS", ""))

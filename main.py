@@ -22,6 +22,9 @@ log = logging.getLogger(__name__)
 def build_application() -> Application:
     app = Application.builder().token(BOT_TOKEN).build()
 
+    # Runs before every other handler; drops updates from unauthorized chats.
+    app.add_handler(MessageHandler(filters.ALL, handlers.guard_allowed_chat), group=-1)
+
     app.add_handler(CommandHandler("start", handlers.cmd_start))
     app.add_handler(CommandHandler("status", handlers.cmd_status))
     app.add_handler(CommandHandler("alarm_on", handlers.cmd_alarm_on))

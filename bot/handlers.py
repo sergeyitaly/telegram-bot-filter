@@ -8,12 +8,13 @@ from datetime import datetime, timezone
 from telegram import ChatPermissions, Update
 from telegram.constants import ChatAction
 from telegram.error import BadRequest
-from telegram.ext import ContextTypes
+from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from bot import filters as classify
 from bot import keywords, media, state
 from bot.config import (
     ADMIN_IDS,
+    ALLOWED_CHAT_IDS,
     MAX_VIDEO_MB,
     TRUSTED_BOT_IDS,
     VIOLATION_THRESHOLD,
@@ -36,6 +37,20 @@ log = logging.getLogger(__name__)
 
 def _is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
+
+
+def _is_allowed_chat(chat_id: int) -> bool:
+    return not ALLOWED_CHAT_IDS or chat_id in ALLOWED_CHAT_IDS
+
+
+async def guard_allowed_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Registered in an earlier handler group than everything else: drops any
+    update from a non-private chat outside ALLOWED_CHAT_IDS before it reaches
+    the filter/command logic. Belt-and-suspenders alongside the auto-leave in
+    on_my_chat_member_update, for the gap between being added and leaving."""
+    chat = update.effective_chat
+    if chat and chat.type != "private" and not _is_allowed_chat(chat.id):
+        raise ApplicationHandlerStop
 
 
 def _exposure_seconds(msg) -> float:
@@ -207,13 +222,32 @@ async def cmd_unmute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 async def on_my_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Track which chats the bot is currently a member of, so the
-    alerts.in.ua poller knows where to (de)activate alarm mode."""
+    alerts.in.ua poller knows where to (de)activate alarm mode. Also enforces
+    ALLOWED_CHAT_IDS: this is one deployed bot on one token, so anyone could
+    otherwise add it to their own chat to see how the filter behaves — leave
+    immediately instead, and tell the admins who added it."""
     cmu = update.my_chat_member
     chat_id = cmu.chat.id
+
     if cmu.new_chat_member.status in ("left", "kicked"):
         state.unregister_chat(chat_id)
-    else:
-        state.register_chat(chat_id)
+        return
+
+    if not _is_allowed_chat(chat_id):
+        adder = cmu.from_user
+        try:
+            await context.bot.leave_chat(chat_id)
+        except Exception:
+            log.exception("failed to leave unauthorized chat %s", chat_id)
+        await _notify_admins(
+            context,
+            "🔒 Bot was added to an unauthorized chat and left automatically.\n"
+            f"Chat: {cmu.chat.title or cmu.chat.type} (id {chat_id})\n"
+            f"Added by: @{adder.username or '?'} (id {adder.id})",
+        )
+        return
+
+    state.register_chat(chat_id)
 
 
 async def _track_violation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
