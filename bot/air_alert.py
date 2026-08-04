@@ -1,4 +1,4 @@
-"""Poll alerts.in.ua for the configured oblast and auto-toggle alarm mode.
+"""Poll alerts.in.ua for the configured oblast(s) and auto-toggle alarm mode.
 
 API docs: https://devs.alerts.in.ua/ — GET /v1/alerts/active.json returns
 {"alerts": [{"alert_type": "air_raid", "location_oblast_uid": "31",
@@ -10,7 +10,7 @@ import logging
 import httpx
 from telegram.ext import ContextTypes
 
-from bot.config import ALERTS_API_TOKEN, ALERTS_OBLAST_UID
+from bot.config import ALERTS_API_TOKEN, ALERTS_OBLAST_UIDS
 
 log = logging.getLogger(__name__)
 
@@ -21,6 +21,9 @@ _last_logged_active: bool | None = None
 
 
 async def _fetch_oblast_air_raid_active() -> bool:
+    """True if ANY watched UID has an active air_raid alert — some oblasts
+    are one UID, others are split per-raion, so "the whole oblast" can mean
+    several UIDs (see ALERTS_OBLAST_UIDS)."""
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(_ACTIVE_ALERTS_URL, params={"token": ALERTS_API_TOKEN})
         resp.raise_for_status()
@@ -29,7 +32,7 @@ async def _fetch_oblast_air_raid_active() -> bool:
         if (
             alert.get("alert_type") == "air_raid"
             and alert.get("finished_at") is None
-            and str(alert.get("location_oblast_uid")) == ALERTS_OBLAST_UID
+            and str(alert.get("location_oblast_uid")) in ALERTS_OBLAST_UIDS
         ):
             return True
     return False
@@ -50,7 +53,7 @@ async def poll(context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     if now_active != _last_logged_active:
-        log.info("alerts.in.ua: air_raid_active=%s in oblast %s", now_active, ALERTS_OBLAST_UID)
+        log.info("alerts.in.ua: air_raid_active=%s in uids %s", now_active, sorted(ALERTS_OBLAST_UIDS))
         _last_logged_active = now_active
 
     # Local import: avoids a handlers<->air_alert import cycle at module load time.

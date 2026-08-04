@@ -65,7 +65,14 @@ POST_ALARM_GRACE_SECONDS = int(os.environ.get("POST_ALARM_GRACE_SECONDS", "7200"
 # (https://devs.alerts.in.ua/) instead of relying only on manual /alarm_on.
 # Leave ALERTS_API_TOKEN empty to disable this entirely.
 ALERTS_API_TOKEN = os.environ.get("ALERTS_API_TOKEN", "")
-ALERTS_OBLAST_UID = os.environ.get("ALERTS_OBLAST_UID", "")
+
+# Comma-separated location_oblast_uid values to watch — alarm arms if ANY of
+# them has an active air_raid alert. Some oblasts are one UID (e.g. м. Київ =
+# 31); densely populated ones are broken into per-raion UIDs that share the
+# oblast name, so covering the whole oblast means listing all of them (e.g.
+# Київська область = 73,74,75,76,77,78,79, its 7 raions). Find UIDs for your
+# region at https://devs.alerts.in.ua/.
+ALERTS_OBLAST_UIDS = {u.strip() for u in os.environ.get("ALERTS_OBLAST_UID", "").split(",") if u.strip()}
 ALERTS_POLL_SECONDS = int(os.environ.get("ALERTS_POLL_SECONDS", "60"))
 
 WARNING_TEXT = (

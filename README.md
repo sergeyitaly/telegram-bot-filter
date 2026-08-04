@@ -122,7 +122,12 @@ Set `ALERTS_API_TOKEN` and `ALERTS_OBLAST_UID` to auto-arm alarm mode from
 start, and a drone strike can hit with no siren warning at all.
 
 1. Get a free token at https://devs.alerts.in.ua/.
-2. Find your oblast's UID from the same docs (e.g. `31` = м. Київ).
+2. Find your region's UID(s) from the same docs. Some oblasts are a single
+   UID (`31` = м. Київ); densely populated ones are split into per-raion
+   UIDs that all share the oblast's name — covering the whole oblast means
+   listing all of them (`Київська область` = `73,74,75,76,77,78,79`, its 7
+   raions). `ALERTS_OBLAST_UID` is comma-separated, alarm arms if *any*
+   listed UID has an active air-raid alert.
 3. Set `ALERTS_API_TOKEN` and `ALERTS_OBLAST_UID` (and optionally
    `ALERTS_POLL_SECONDS`, default 60).
 

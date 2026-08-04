@@ -10,7 +10,7 @@ from telegram.ext import (
 )
 
 from bot import air_alert, handlers, health
-from bot.config import ALERTS_API_TOKEN, ALERTS_OBLAST_UID, ALERTS_POLL_SECONDS, BOT_TOKEN, PORT
+from bot.config import ALERTS_API_TOKEN, ALERTS_OBLAST_UIDS, ALERTS_POLL_SECONDS, BOT_TOKEN, PORT
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -43,9 +43,9 @@ def build_application() -> Application:
     app.add_handler(MessageHandler(filters.VIDEO | filters.VIDEO_NOTE, handlers.on_video))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.on_text))
 
-    if ALERTS_API_TOKEN and ALERTS_OBLAST_UID:
+    if ALERTS_API_TOKEN and ALERTS_OBLAST_UIDS:
         app.job_queue.run_repeating(air_alert.poll, interval=ALERTS_POLL_SECONDS, first=10)
-        log.info("alerts.in.ua auto-alarm enabled for oblast %s", ALERTS_OBLAST_UID)
+        log.info("alerts.in.ua auto-alarm enabled for uids %s", sorted(ALERTS_OBLAST_UIDS))
     else:
         log.info("alerts.in.ua auto-alarm disabled (ALERTS_API_TOKEN/ALERTS_OBLAST_UID not set)")
 
