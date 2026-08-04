@@ -10,6 +10,8 @@ Split into two tiers:
 """
 import re
 
+from bot import store
+
 STRIKE_TERMS = [
     # Ukrainian
     r"приліт", r"прильот", r"влучанн", r"влучив", r"влучила", r"влучили",
@@ -35,19 +37,48 @@ COORDINATE_RE = re.compile(r"-?\d{1,3}[.,]\d{3,6}\s*,\s*-?\d{1,3}[.,]\d{3,6}")
 _STRIKE_RE = re.compile("|".join(STRIKE_TERMS), re.IGNORECASE)
 _LOCATION_RE = re.compile("|".join(LOCATION_TERMS), re.IGNORECASE)
 
+_CUSTOM_TERMS_KEY = "custom_keywords"
 
-def add_term(term: str, tier: str = "strike") -> None:
-    """Allow admins to extend the lists at runtime via /addkeyword."""
+# Raw (unescaped) terms added at runtime via /addkeyword, tracked separately
+# from the hardcoded baseline so only the additions get persisted/restored —
+# not a frozen copy of the whole list, which would drift from code changes.
+_custom_strike_terms: list[str] = []
+_custom_location_terms: list[str] = []
+
+
+def _add_term_in_memory(term: str, tier: str) -> None:
     global _STRIKE_RE, _LOCATION_RE
-    escaped = re.escape(term.strip())
-    if not escaped:
-        return
+    escaped = re.escape(term)
     if tier == "location":
         LOCATION_TERMS.append(escaped)
         _LOCATION_RE = re.compile("|".join(LOCATION_TERMS), re.IGNORECASE)
+        _custom_location_terms.append(term)
     else:
         STRIKE_TERMS.append(escaped)
         _STRIKE_RE = re.compile("|".join(STRIKE_TERMS), re.IGNORECASE)
+        _custom_strike_terms.append(term)
+
+
+async def hydrate() -> None:
+    """Load runtime-added keywords from Redis (no-op if not configured).
+    Call once at startup, before polling begins."""
+    data = await store.get_json(_CUSTOM_TERMS_KEY, {"strike": [], "location": []})
+    for term in data.get("strike", []):
+        _add_term_in_memory(term, "strike")
+    for term in data.get("location", []):
+        _add_term_in_memory(term, "location")
+
+
+async def add_term(term: str, tier: str = "strike") -> None:
+    """Allow admins to extend the lists at runtime via /addkeyword."""
+    term = term.strip()
+    if not term:
+        return
+    _add_term_in_memory(term, tier)
+    await store.set_json(
+        _CUSTOM_TERMS_KEY,
+        {"strike": _custom_strike_terms, "location": _custom_location_terms},
+    )
 
 
 def has_strike_term(text: str) -> bool:

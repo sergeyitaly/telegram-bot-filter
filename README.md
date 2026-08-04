@@ -190,11 +190,33 @@ trust can activate the bot in their own group entirely on their own:
 4. That admin can add co-admins for their group with `/addadmin <user_id>`
    — independently, no owner involvement.
 
-Self-registered admins are **in-memory only** — like alarm state, they
-don't survive a redeploy or a Render free-tier restart. After a restart, an
-admin runs `/activate` once in their group to re-establish it (same
-verified-admin check, instant). Move a group into `CHAT_ADMINS` instead if
-it needs to survive restarts with zero action from anyone.
+Self-registered admins survive a restart if `UPSTASH_REDIS_REST_URL`/`_TOKEN`
+are set (see [Persisting state across restarts](#persisting-state-across-restarts)
+below) — without that, they're in-memory only, and an admin runs `/activate`
+once in their group after a restart to re-establish it (same verified-admin
+check, instant). `CHAT_ADMINS` is a third option that needs zero action from
+anyone, restart or not, since it's read from env vars on every startup.
+
+## Persisting state across restarts
+
+Everything the bot tracks at runtime — alarm/lockdown state, self-claimed
+chat admins, custom `/addkeyword` terms — lives in memory by default, which
+Render's free tier wipes on every redeploy, cold-start, or periodic forced
+restart. Set `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` to
+write this through to [Upstash](https://upstash.com) (free tier, REST API —
+no persistent TCP connection to manage) so it survives:
+
+1. Create a free database at upstash.com.
+2. On the database's page, copy the REST URL and REST token.
+3. Set both as env vars. Leave either empty to run fully in-memory as
+   before — nothing else changes, the bot just re-loses this state on every
+   restart like it always did.
+
+What's deliberately **not** persisted: per-user violation counts (window is
+minutes, not worth the write traffic) and which chats the bot has recently
+seen a message in (`known_chats`, rebuilt automatically the moment any
+message arrives — self-claimed chats are seeded into it immediately on
+hydration since they're already in the persisted admin list).
 
 ## Reporting the bot's own downtime
 
@@ -215,7 +237,10 @@ downtime in the first place (see "Keeping it awake" above).
 
 - Add keywords at runtime (admin only): `/addkeyword слово` (strike-result
   tier) or `/addkeyword назва_району location` (location tier — only fires
-  during alarm mode).
+  during alarm mode). Survives a restart if `UPSTASH_REDIS_REST_URL` is set
+  (see below); otherwise it's in-memory only and silently resets to whatever
+  is hardcoded in `bot/keywords.py` on the next redeploy/restart, with no
+  warning when that happens.
 - Edit `bot/keywords.py` directly for a permanent change, then redeploy.
 - `PHOTO_BLUR_RADIUS` / `VIDEO_BLUR_STRENGTH` env vars control how heavy the
   blur is (higher = less recoverable detail).

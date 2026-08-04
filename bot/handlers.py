@@ -157,14 +157,13 @@ async def activate_alarm(context: ContextTypes.DEFAULT_TYPE, chat_id: int, auto:
     """Turn alarm mode on: lock down media send permissions chat-wide so
     there's nothing for anyone already watching to scrape, reactive keyword
     filtering keeps handling text. Reused by /alarm_on and the alerts.in.ua poller."""
-    state.set_alarm(chat_id, True, auto=auto)
+    await state.set_alarm(chat_id, True, auto=auto)
 
     lockdown_note = ""
     try:
         chat = await context.bot.get_chat(chat_id)
         original = chat.permissions
-        st = state.get(chat_id)
-        st.saved_permissions = original
+        await state.set_saved_permissions(chat_id, original)
         await context.bot.set_chat_permissions(
             chat_id,
             ChatPermissions(
@@ -199,7 +198,7 @@ async def activate_alarm(context: ContextTypes.DEFAULT_TYPE, chat_id: int, auto:
 
 
 async def deactivate_alarm(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
-    state.set_alarm(chat_id, False)
+    await state.set_alarm(chat_id, False)
 
     st = state.get(chat_id)
     restore_note = ""
@@ -211,7 +210,7 @@ async def deactivate_alarm(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> 
         except BadRequest as exc:
             log.warning("could not restore permissions in chat %s: %s", chat_id, exc)
             restore_note = f"⚠️ Alarm OFF у чаті {chat_id}, але не вдалось відновити права чату ({exc.message}) — перевірте вручну."
-        st.saved_permissions = None
+        await state.set_saved_permissions(chat_id, None)
 
     await _announce(context, chat_id, "✅ Тривога: відбій.")
     if restore_note:
@@ -240,7 +239,7 @@ async def cmd_addkeyword(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     tier = "location" if context.args[-1] == "location" else "strike"
     term = " ".join(context.args[:-1] if tier == "location" else context.args)
-    keywords.add_term(term, tier)
+    await keywords.add_term(term, tier)
     await update.message.reply_text(
         f"Added \"{term}\" to {tier} keywords. Note: this list is shared across "
         "every chat this bot serves, not just yours."
@@ -280,7 +279,7 @@ async def cmd_unmute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def _register_chat_admin(context: ContextTypes.DEFAULT_TYPE, chat, user) -> None:
-    state.add_chat_admin(chat.id, user.id)
+    await state.add_chat_admin(chat.id, user.id)
     state.register_chat(chat.id)
     await _announce(
         context, chat.id,
@@ -314,7 +313,7 @@ async def cmd_addadmin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not context.args or not context.args[0].isdigit():
         await update.message.reply_text("Usage: /addadmin <user_id>")
         return
-    state.add_chat_admin(chat_id, int(context.args[0]))
+    await state.add_chat_admin(chat_id, int(context.args[0]))
     await update.message.reply_text(f"User {context.args[0]} can now run admin commands in this chat.")
 
 

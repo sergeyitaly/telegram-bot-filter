@@ -85,6 +85,14 @@ UPTIMEROBOT_API_KEY = os.environ.get("UPTIMEROBOT_API_KEY", "")
 UPTIMEROBOT_MONITOR_ID = os.environ.get("UPTIMEROBOT_MONITOR_ID", "")
 UPTIMEROBOT_POLL_SECONDS = int(os.environ.get("UPTIMEROBOT_POLL_SECONDS", "600"))
 
+# Optional: persist claimed admins, custom keywords, and alarm/lockdown
+# state across restarts via Upstash Redis's REST API (no TCP client needed,
+# fits the same request/response style as the other pollers). Free tier at
+# upstash.com. Leave either empty to run fully in-memory as before — the
+# bot still works, it just re-loses this state on every restart.
+UPSTASH_REDIS_REST_URL = os.environ.get("UPSTASH_REDIS_REST_URL", "")
+UPSTASH_REDIS_REST_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN", "")
+
 WARNING_TEXT = (
     "⚠️ Повідомлення видалено. Публікація наслідків ударів (фото/відео/адреси/координати) "
     "під час чи одразу після атаки допомагає ворогу коригувати наведення. "

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from telegram import Update
@@ -9,7 +10,7 @@ from telegram.ext import (
     filters,
 )
 
-from bot import air_alert, handlers, health, uptime_check
+from bot import air_alert, handlers, health, keywords, state, store, uptime_check
 from bot.config import (
     ALERTS_API_TOKEN,
     ALERTS_OBLAST_UIDS,
@@ -67,8 +68,18 @@ def build_application() -> Application:
     return app
 
 
+async def _hydrate() -> None:
+    if store.ENABLED:
+        await state.hydrate()
+        await keywords.hydrate()
+        log.info("hydrated state from Redis")
+    else:
+        log.info("Redis persistence disabled (UPSTASH_REDIS_REST_URL/TOKEN not set) — running in-memory only")
+
+
 def main() -> None:
     health.start_in_background(PORT)
+    asyncio.run(_hydrate())
     app = build_application()
     log.info("starting polling")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
