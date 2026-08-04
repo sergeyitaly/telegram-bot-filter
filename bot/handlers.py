@@ -2,7 +2,6 @@
 import asyncio
 import logging
 import os
-import secrets
 import tempfile
 from datetime import datetime, timezone
 
@@ -16,8 +15,6 @@ from bot import keywords, media, state
 from bot.config import (
     ALLOWED_CHAT_IDS,
     CHAT_ADMINS,
-    CLAIM_TIMEOUT_SECONDS,
-    INVITE_TOKENS,
     MAX_VIDEO_MB,
     OWNER_IDS,
     POST_ALARM_GRACE_SECONDS,
@@ -42,7 +39,7 @@ log = logging.getLogger(__name__)
 
 def _admins_for(chat_id: int) -> set[int]:
     """Owners are admin everywhere; each chat also has its own admin set —
-    either hardcoded via CHAT_ADMINS, or self-registered via /claim."""
+    either hardcoded via CHAT_ADMINS, or self-registered on add/via /addadmin."""
     return CHAT_ADMINS.get(chat_id, set()) | state.claimed_admins_for(chat_id) | OWNER_IDS
 
 
@@ -54,11 +51,11 @@ def _is_allowed_chat(chat_id: int) -> bool:
     return chat_id in ALLOWED_CHAT_IDS or state.is_claimed(chat_id)
 
 
-def _is_claim_command(update: Update) -> bool:
+def _is_activate_command(update: Update) -> bool:
     msg = update.effective_message
     if not msg or not msg.text:
         return False
-    return msg.text.split()[0].split("@")[0].lower() == "/claim"
+    return msg.text.split()[0].split("@")[0].lower() == "/activate"
 
 
 def _strict_mode(chat_id: int, st) -> bool:
@@ -72,13 +69,12 @@ def _strict_mode(chat_id: int, st) -> bool:
 async def guard_allowed_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Registered in an earlier handler group than everything else: drops any
     update from a non-private chat outside the allowlist before it reaches
-    filter/command logic — except /claim, which is how a chat gets onto the
-    allowlist in the first place. Belt-and-suspenders alongside the
-    auto-leave-if-unclaimed job, for the gap before that job fires."""
+    filter/command logic — except /activate, the recovery path if this
+    chat's registration was lost (e.g. a restart) and needs re-establishing."""
     chat = update.effective_chat
     if not chat or chat.type == "private":
         return
-    if _is_allowed_chat(chat.id) or _is_claim_command(update):
+    if _is_allowed_chat(chat.id) or _is_activate_command(update):
         return
     raise ApplicationHandlerStop
 
@@ -97,6 +93,20 @@ async def _notify_admins(context: ContextTypes.DEFAULT_TYPE, chat_id: int, text:
             await context.bot.send_message(chat_id=admin_id, text=text)
         except Exception:
             log.warning("could not DM admin %s (they may need to /start the bot first)", admin_id)
+
+
+async def _announce(context: ContextTypes.DEFAULT_TYPE, chat_id: int, text: str) -> None:
+    """Post directly in the group, for the one thing every member should see:
+    whether alarm mode is currently on. This isn't sensitive — the underlying
+    fact (an active air-raid alert) is already public via official apps and
+    sirens, and it's the reason members' photos/videos are being blocked
+    right now, so hiding it just confuses people. Contrast with
+    _notify_admins: violation/claim/bot-kick details stay admin-only, those
+    are moderation mechanics, not a public status."""
+    try:
+        await context.bot.send_message(chat_id, text)
+    except Exception:
+        log.exception("failed to announce in chat %s", chat_id)
 
 
 async def _notify_owners(context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
@@ -174,21 +184,21 @@ async def activate_alarm(context: ContextTypes.DEFAULT_TYPE, chat_id: int, auto:
     except BadRequest as exc:
         log.warning("could not restrict media in chat %s: %s", chat_id, exc)
         lockdown_note = (
-            "\n⚠️ Не вдалось заблокувати надсилання медіа "
-            f"({exc.message}). Ймовірно, це базова група — "
-            "оновіть її до supergroup, щоб увімкнути цей захист. "
+            f"⚠️ Alarm ON у чаті {chat_id}, але не вдалось заблокувати медіа "
+            f"({exc.message}). Ймовірно, базова група — оновіть до supergroup. "
             "Реактивне видалення за ключовими словами й надалі працює."
         )
 
-    source = "автоматично (alerts.in.ua)" if auto else "вручну"
-    await _notify_admins(
+    await _announce(
         context, chat_id,
-        f"🚨 Alarm mode ON ({source}) — фото/відео від учасників заблоковано на рівні чату, "
-        "текст фільтрується реактивно." + lockdown_note
+        "🚨 Тривога: увімкнено — фото/відео від учасників заблоковано, "
+        "текст фільтрується."
     )
+    if lockdown_note:
+        await _notify_admins(context, chat_id, lockdown_note)
 
 
-async def deactivate_alarm(context: ContextTypes.DEFAULT_TYPE, chat_id: int, auto: bool = False) -> None:
+async def deactivate_alarm(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
     state.set_alarm(chat_id, False)
 
     st = state.get(chat_id)
@@ -200,11 +210,12 @@ async def deactivate_alarm(context: ContextTypes.DEFAULT_TYPE, chat_id: int, aut
             )
         except BadRequest as exc:
             log.warning("could not restore permissions in chat %s: %s", chat_id, exc)
-            restore_note = f"\n⚠️ Не вдалось відновити права чату ({exc.message}) — перевірте вручну."
+            restore_note = f"⚠️ Alarm OFF у чаті {chat_id}, але не вдалось відновити права чату ({exc.message}) — перевірте вручну."
         st.saved_permissions = None
 
-    source = "автоматично (alerts.in.ua)" if auto else "вручну"
-    await _notify_admins(context, chat_id, f"✅ Alarm mode off ({source})." + restore_note)
+    await _announce(context, chat_id, "✅ Тривога: відбій.")
+    if restore_note:
+        await _notify_admins(context, chat_id, restore_note)
 
 
 async def cmd_alarm_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -218,7 +229,7 @@ async def cmd_alarm_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not _is_admin(update.effective_chat.id, update.effective_user.id):
         return
     await _delete_silently(update.effective_message)
-    await deactivate_alarm(context, update.effective_chat.id, auto=False)
+    await deactivate_alarm(context, update.effective_chat.id)
 
 
 async def cmd_addkeyword(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -268,40 +279,32 @@ async def cmd_unmute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(f"User {user_id} unmuted.")
 
 
-async def cmd_claim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Self-service activation: requires BOTH a valid invite token AND that
-    the caller is verified (via the Telegram API, not their say-so) as an
-    actual admin/creator of this specific chat — a token alone isn't enough
-    to activate the bot in a chat you don't administer."""
-    chat_id = update.effective_chat.id
-    if update.effective_chat.type == "private" or not state.is_pending_claim(chat_id):
-        return
-    if not context.args:
-        await update.message.reply_text("Usage: /claim <token>")
-        return
-
-    token = context.args[0]
-    if not any(secrets.compare_digest(token, valid) for valid in INVITE_TOKENS):
-        await update.message.reply_text("❌ Invalid token.")
-        return
-
-    member = await context.bot.get_chat_member(chat_id, update.effective_user.id)
-    if member.status not in ("administrator", "creator"):
-        await update.message.reply_text("❌ Only a Telegram admin of this group can claim the bot.")
-        return
-
-    state.add_chat_admin(chat_id, update.effective_user.id)
-    state.clear_pending_claim(chat_id)
-    state.register_chat(chat_id)
-    await update.message.reply_text(
-        "✅ Activated. Alarm mode, filtering, and admin commands are now live "
-        "for this group. Add co-admins with /addadmin <user_id>."
+async def _register_chat_admin(context: ContextTypes.DEFAULT_TYPE, chat, user) -> None:
+    state.add_chat_admin(chat.id, user.id)
+    state.register_chat(chat.id)
+    await _announce(
+        context, chat.id,
+        "✅ Bot activated for this group. Alarm mode and content filtering are now live."
     )
     await _notify_owners(
         context,
-        f"✅ Chat {chat_id} ({update.effective_chat.title}) self-claimed by "
-        f"@{update.effective_user.username or '?'} (id {update.effective_user.id}).",
+        f"✅ Chat {chat.id} ({chat.title}) auto-activated — added by verified admin "
+        f"@{user.username or '?'} (id {user.id}).",
     )
+
+
+async def cmd_activate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Recovery path: re-establish this chat's registration if it was lost
+    (e.g. a bot restart cleared in-memory state). Same verified-admin check
+    as the automatic on-add flow, no token — being a real Telegram
+    admin/creator of *this* chat is the only requirement."""
+    chat_id = update.effective_chat.id
+    if update.effective_chat.type == "private" or _is_allowed_chat(chat_id):
+        return
+    member = await context.bot.get_chat_member(chat_id, update.effective_user.id)
+    if member.status not in ("administrator", "creator"):
+        return
+    await _register_chat_admin(context, update.effective_chat, update.effective_user)
 
 
 async def cmd_addadmin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -315,64 +318,40 @@ async def cmd_addadmin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(f"User {context.args[0]} can now run admin commands in this chat.")
 
 
-async def _leave_if_unclaimed(context: ContextTypes.DEFAULT_TYPE) -> None:
-    chat_id = context.job.data
-    if not state.is_pending_claim(chat_id):
-        return  # claimed (or already left) in the meantime
-    state.clear_pending_claim(chat_id)
-    try:
-        await context.bot.leave_chat(chat_id)
-    except Exception:
-        log.exception("failed to leave unclaimed chat %s", chat_id)
-    await _notify_owners(context, f"⏱️ Chat {chat_id} was never claimed within {CLAIM_TIMEOUT_SECONDS}s — left.")
-
-
 async def on_my_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Track which chats the bot is currently a member of, so the
     alerts.in.ua poller knows where to (de)activate alarm mode. Also gates
     onboarding: this is one deployed bot on one token, so anyone could
-    otherwise add it to their own chat to see how the filter behaves. A newly
-    added chat gets a claim window instead of being served (or left)
-    immediately — see cmd_claim."""
+    otherwise add it to their own chat to see how the filter behaves. Auto-
+    registers immediately if the Telegram API confirms whoever added it is
+    an actual admin/creator of that chat; otherwise leaves right away."""
     cmu = update.my_chat_member
     chat_id = cmu.chat.id
 
     if cmu.new_chat_member.status in ("left", "kicked"):
         state.unregister_chat(chat_id)
-        state.clear_pending_claim(chat_id)
         return
 
     if _is_allowed_chat(chat_id):
         state.register_chat(chat_id)
         return
 
-    if not INVITE_TOKENS:
-        # No self-service configured at all — fall back to immediate leave.
-        adder = cmu.from_user
-        try:
-            await context.bot.leave_chat(chat_id)
-        except Exception:
-            log.exception("failed to leave unauthorized chat %s", chat_id)
-        await _notify_owners(
-            context,
-            "🔒 Bot was added to an unauthorized chat and left automatically "
-            "(no INVITE_TOKENS configured, so self-claim is off).\n"
-            f"Chat: {cmu.chat.title or cmu.chat.type} (id {chat_id})\n"
-            f"Added by: @{adder.username or '?'} (id {adder.id})",
-        )
+    adder = cmu.from_user
+    member = await context.bot.get_chat_member(chat_id, adder.id)
+    if member.status in ("administrator", "creator"):
+        await _register_chat_admin(context, cmu.chat, adder)
         return
 
-    state.mark_pending_claim(chat_id)
     try:
-        await context.bot.send_message(
-            chat_id,
-            "🔒 This bot needs to be activated before it will do anything here.\n"
-            f"A Telegram admin of this group must run /claim <token> within "
-            f"{CLAIM_TIMEOUT_SECONDS // 60} minutes, or the bot leaves automatically.",
-        )
+        await context.bot.leave_chat(chat_id)
     except Exception:
-        log.exception("failed to post claim instructions in chat %s", chat_id)
-    context.job_queue.run_once(_leave_if_unclaimed, when=CLAIM_TIMEOUT_SECONDS, data=chat_id)
+        log.exception("failed to leave unauthorized chat %s", chat_id)
+    await _notify_owners(
+        context,
+        "🔒 Bot was added by someone who isn't an admin of that chat — left automatically.\n"
+        f"Chat: {cmu.chat.title or cmu.chat.type} (id {chat_id})\n"
+        f"Added by: @{adder.username or '?'} (id {adder.id})",
+    )
 
 
 async def _track_violation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -25,23 +25,16 @@ BOT_TOKEN = os.environ["BOT_TOKEN"]
 # aren't scoped to any one group.
 OWNER_IDS = _int_list(os.environ.get("OWNER_IDS", ""))
 
-# Per-chat admins: "chat_id:user_id,user_id; chat_id:user_id". Each chat's
-# admins can run /alarm_on etc. and get DMs ONLY about their own chat — one
-# bot deployment can serve several unrelated groups without their admins
-# seeing each other's alarm activity. A chat not listed here isn't served at
-# all: the bot auto-leaves it (see on_my_chat_member_update) rather than
-# letting anyone add this single shared bot to their own group to probe it.
+# Per-chat admins you hardcode in advance: "chat_id:user_id,user_id;
+# chat_id:user_id". Each chat's admins can run /alarm_on etc. and get DMs
+# ONLY about their own chat — one bot deployment can serve several unrelated
+# groups without their admins seeing each other's alarm activity. A chat not
+# listed here isn't automatically served either: on_my_chat_member_update
+# self-registers a chat the moment it's added, but only if the person who
+# added the bot is a verified Telegram admin/creator of that chat — anyone
+# else gets the bot removed immediately. See bot/handlers.py.
 CHAT_ADMINS = _parse_chat_admins(os.environ.get("CHAT_ADMINS", ""))
 ALLOWED_CHAT_IDS = set(CHAT_ADMINS.keys())
-
-# Shared secrets you hand out privately (Signal, in person, etc.) to admins
-# you trust to self-activate the bot in their own group, without you having
-# to edit CHAT_ADMINS and redeploy for every new chat. A chat still isn't
-# served until someone both knows a valid token AND is verified (via the
-# Telegram API, not just their say-so) as an actual admin of that specific
-# chat — see /claim in bot/handlers.py.
-INVITE_TOKENS = {t.strip() for t in os.environ.get("INVITE_TOKENS", "").split(",") if t.strip()}
-CLAIM_TIMEOUT_SECONDS = int(os.environ.get("CLAIM_TIMEOUT_SECONDS", "600"))
 
 # Bot accounts allowed to join without being auto-kicked (e.g. other moderation
 # bots you deliberately add). Extendable at runtime via /allowbot.

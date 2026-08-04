@@ -61,4 +61,4 @@ async def poll(context: ContextTypes.DEFAULT_TYPE) -> None:
         if now_active and not st.alarm_active:
             await handlers.activate_alarm(context, chat_id, auto=True)
         elif not now_active and st.alarm_active and st.auto_armed:
-            await handlers.deactivate_alarm(context, chat_id, auto=True)
+            await handlers.deactivate_alarm(context, chat_id)

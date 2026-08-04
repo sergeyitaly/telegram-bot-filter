@@ -25,11 +25,17 @@ confirm a hit or correct aim for a follow-up strike:
   times within `VIOLATION_WINDOW_SECONDS` is auto-muted pending admin review
   (`/unmute <user_id>` to lift it).
 
-Alarm mode toggles (`/alarm_on`, `/alarm_off`, `/status`) reply via **admin
-DM**, not in the group, and the triggering command is deleted — so the timing
-of a toggle isn't visible to chat members. Alarm mode can also auto-arm from
-real air-raid status via [alerts.in.ua](https://devs.alerts.in.ua/) (see
-below) instead of relying only on a manual `/alarm_on`.
+Whether alarm mode is on/off is posted **publicly in the group** on every
+change — the underlying fact (an active air-raid alert) is already public
+via official apps and sirens, and it's why members' photos/videos are
+suddenly being blocked, so hiding it just confuses people. `/status` still
+replies by admin DM (an on-demand query, not a state-change broadcast), and
+the `/alarm_on`/`/alarm_off` command message itself is deleted so it's the
+bot's own announcement people see, not who triggered it. Technical failures
+(e.g. couldn't lock permissions) go to admin DM only — that's a moderation
+detail, not a public status. Alarm mode can also auto-arm from real
+air-raid status via [alerts.in.ua](https://devs.alerts.in.ua/) (see below)
+instead of relying only on a manual `/alarm_on`.
 
 ### Why alarm mode locks permissions instead of just deleting
 
@@ -148,8 +154,8 @@ hand-configure every group yourself:
   DMs about their own chat's alarm/violation activity — never another
   group's.
 - **`OWNER_IDS`** (you, the deployer) are admin in every chat and are the
-  only ones told about bot-wide security events, like a chat that was
-  added but never claimed.
+  only ones told about bot-wide security events, like someone who isn't an
+  admin trying to add the bot somewhere.
 - `/allowbot` is owner-only, since it exempts a bot account across every
   chat this deployment serves — not just the one the command was run in.
 - The keyword list (`/addkeyword`, `bot/keywords.py`) is shared across all
@@ -166,28 +172,24 @@ OWNER_IDS=583805446
 CHAT_ADMINS=-1001111111111:222222222; -1002222222222:333333333,444444444
 ```
 
-**Self-service (`INVITE_TOKENS`)** — an admin you trust activates their own
-group without you touching config at all:
+**Self-service (automatic, no token, no owner involvement)** — any admin you
+trust can activate the bot in their own group entirely on their own:
 
-1. Generate a token: `python -c "import secrets; print(secrets.token_urlsafe(24))"`
-2. Set `INVITE_TOKENS=<the token>` (comma-separate more than one if you want
-   distinct tokens per person/purpose).
-3. Share the token with the admin privately — Signal, in person — **not**
-   posted in the group itself.
-4. They add the bot to their group. It posts a one-time notice and does
-   nothing else — no filtering, no commands work yet.
-5. They run `/claim <token>` in their group. This only succeeds if the
-   token is valid **and** the Telegram API confirms they're actually an
-   admin of that specific chat — knowing the token alone isn't enough.
-6. Unclaimed within `CLAIM_TIMEOUT_SECONDS` (default 10 min): the bot
-   leaves on its own and DMs the owners.
-7. Once claimed, that admin can add co-admins for their group with
-   `/addadmin <user_id>` — independently, no owner involvement.
+1. They add the bot to their group.
+2. The bot checks, via the Telegram API (not their say-so), whether whoever
+   added it is an actual admin/creator of that specific chat.
+3. If yes: it activates immediately — posts a confirmation in the group,
+   registers that person as the chat's admin, and DMs the owners for
+   awareness. If no (a non-admin member added it): it leaves immediately
+   and DMs the owners who tried.
+4. That admin can add co-admins for their group with `/addadmin <user_id>`
+   — independently, no owner involvement.
 
-Self-claimed admins are **in-memory only** — like alarm state, they don't
-survive a redeploy or a Render free-tier restart, and need a fresh
-`/claim`. Move a group into `CHAT_ADMINS` instead if it needs to survive
-restarts without re-claiming.
+Self-registered admins are **in-memory only** — like alarm state, they
+don't survive a redeploy or a Render free-tier restart. After a restart, an
+admin runs `/activate` once in their group to re-establish it (same
+verified-admin check, instant). Move a group into `CHAT_ADMINS` instead if
+it needs to survive restarts with zero action from anyone.
 
 ## Tuning the filter
 
