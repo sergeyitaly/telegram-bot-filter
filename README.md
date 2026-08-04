@@ -348,6 +348,30 @@ bot is back up and the next `UPTIMEROBOT_POLL_SECONDS` tick runs (default
 replaces, actually keeping UptimeRobot pinging `/health` to prevent that
 downtime in the first place (see "Keeping it awake" above).
 
+## Monitoring bot health across every group
+
+With one deployment serving several groups, a struggling bot degrades
+moderation for every one of them at once — a stuck lockdown, a filter that
+falls behind, a Redis outage nobody notices until state stops persisting.
+`bot/health_monitor.py` runs a self-check every `HEALTH_MONITOR_POLL_SECONDS`
+(default 120s, always on — no external API key needed) and DMs owners **and
+every chat's admins** if:
+
+- **Redis is unhealthy**: 3+ consecutive failed Upstash requests. State
+  (alarm lockdowns, custom keywords, claimed admins) is silently falling
+  back to in-memory-only while this persists.
+- **The processing queue is backing up**: pending Telegram updates exceed a
+  threshold, meaning handlers can't keep up — deletion/blur may be lagging.
+- **Many users trip the media rate limit at once**: one user flooding is
+  normal flood protection; a burst across many users/chats in a short window
+  signals either abuse or several groups getting hit simultaneously.
+
+Each condition alerts once, then stays quiet for 30 minutes while it
+persists (no repeat-spam), and clears immediately on recovery so a new
+incident alerts again right away. Unlike `/status` or the per-chat admin
+DMs elsewhere in this bot, these go to **every** chat's admins since the
+underlying issue isn't scoped to one group.
+
 ## Tuning the filter
 
 - Add keywords at runtime (chat admin): `/addkeyword слово` (strike-result
