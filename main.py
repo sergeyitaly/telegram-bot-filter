@@ -3,13 +3,14 @@ import logging
 from telegram import Update
 from telegram.ext import (
     Application,
+    ChatMemberHandler,
     CommandHandler,
     MessageHandler,
     filters,
 )
 
-from bot import handlers, health
-from bot.config import BOT_TOKEN, PORT
+from bot import air_alert, handlers, health
+from bot.config import ALERTS_API_TOKEN, ALERTS_OBLAST_UID, ALERTS_POLL_SECONDS, BOT_TOKEN, PORT
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -26,11 +27,22 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("alarm_on", handlers.cmd_alarm_on))
     app.add_handler(CommandHandler("alarm_off", handlers.cmd_alarm_off))
     app.add_handler(CommandHandler("addkeyword", handlers.cmd_addkeyword))
+    app.add_handler(CommandHandler("allowbot", handlers.cmd_allowbot))
+    app.add_handler(CommandHandler("unmute", handlers.cmd_unmute))
+
+    app.add_handler(ChatMemberHandler(handlers.on_chat_member_update, ChatMemberHandler.CHAT_MEMBER))
+    app.add_handler(ChatMemberHandler(handlers.on_my_chat_member_update, ChatMemberHandler.MY_CHAT_MEMBER))
 
     app.add_handler(MessageHandler(filters.LOCATION, handlers.on_location))
     app.add_handler(MessageHandler(filters.PHOTO, handlers.on_photo))
     app.add_handler(MessageHandler(filters.VIDEO | filters.VIDEO_NOTE, handlers.on_video))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.on_text))
+
+    if ALERTS_API_TOKEN and ALERTS_OBLAST_UID:
+        app.job_queue.run_repeating(air_alert.poll, interval=ALERTS_POLL_SECONDS, first=10)
+        log.info("alerts.in.ua auto-alarm enabled for oblast %s", ALERTS_OBLAST_UID)
+    else:
+        log.info("alerts.in.ua auto-alarm disabled (ALERTS_API_TOKEN/ALERTS_OBLAST_UID not set)")
 
     return app
 
