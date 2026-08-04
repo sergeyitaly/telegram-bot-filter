@@ -56,6 +56,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("listkeywords", handlers.cmd_listkeywords))
     app.add_handler(CommandHandler("allowbot", handlers.cmd_allowbot))
     app.add_handler(CommandHandler("unmute", handlers.cmd_unmute))
+    app.add_handler(CommandHandler("violations", handlers.cmd_violations))
     app.add_handler(CommandHandler("activate", handlers.cmd_activate))
     app.add_handler(CommandHandler("addadmin", handlers.cmd_addadmin))
 

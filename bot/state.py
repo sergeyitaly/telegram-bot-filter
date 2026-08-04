@@ -3,8 +3,11 @@
 Everything here is in-memory first (fast, no await needed to read), with the
 handful of fields where losing state on restart causes real harm — alarm
 lockdown, claimed admins — written through to Redis via bot/store.py if
-configured. Violations are intentionally left in-memory only: their window
-is short (minutes) and losing a partial count on restart is low-stakes.
+configured. The short-window violation *counter* used for auto-mute is
+intentionally in-memory only (minutes-long window, low stakes if reset by a
+restart); the violation *audit log* (log_violation/get_violation_log) is
+durable and Redis-backed on purpose — it exists specifically so it survives
+for a chat admin to review later.
 """
 import time
 from dataclasses import dataclass
@@ -150,3 +153,34 @@ def record_violation(chat_id: int, user_id: int, window_seconds: int) -> int:
     hits.append(now)
     _violations[key] = hits
     return len(hits)
+
+
+# Cap per chat so the log can't grow unbounded over a long-lived deployment.
+_VIOLATION_LOG_MAX = 500
+
+
+async def log_violation(chat_id: int, user_id: int, username: str | None, reason: str, text: str) -> None:
+    """Append a durable audit-log entry for a flagged message — for a chat's
+    admin to review and decide whether escalation (e.g. to police) is
+    warranted. No-op if Redis isn't configured; deliberately text-only, no
+    media, so this log can't itself become a copy of the content it's
+    meant to help suppress."""
+    key = f"violations_log:{chat_id}"
+    entries = await store.get_json(key, [])
+    entries.append({
+        "ts": time.time(),
+        "user_id": user_id,
+        "username": username,
+        "reason": reason,
+        "text": text[:500],  # bounded, this is an audit trail, not a full transcript
+    })
+    if len(entries) > _VIOLATION_LOG_MAX:
+        entries = entries[-_VIOLATION_LOG_MAX:]
+    await store.set_json(key, entries)
+
+
+async def get_violation_log(chat_id: int, user_id: int | None = None) -> list[dict]:
+    entries = await store.get_json(f"violations_log:{chat_id}", [])
+    if user_id is not None:
+        entries = [e for e in entries if e.get("user_id") == user_id]
+    return entries

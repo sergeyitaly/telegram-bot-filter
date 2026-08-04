@@ -55,6 +55,13 @@ VIDEO_BLUR_STRENGTH = int(os.environ.get("VIDEO_BLUR_STRENGTH", "30"))
 VIOLATION_THRESHOLD = int(os.environ.get("VIOLATION_THRESHOLD", "3"))
 VIOLATION_WINDOW_SECONDS = int(os.environ.get("VIOLATION_WINDOW_SECONDS", "600"))
 
+# Separate from the above: a cumulative, no-time-window count of a user's
+# TOTAL logged violations in a chat (persisted — see state.log_violation),
+# for spotting a pattern across many separate alarms rather than a single
+# burst. Crossing a multiple of this notifies admins to review /violations
+# <user_id> and decide whether escalation (e.g. to police) is warranted.
+REPORT_VIOLATION_THRESHOLD = int(os.environ.get("REPORT_VIOLATION_THRESHOLD", "10"))
+
 # How long after alarm mode turns off (відбій) strike-result keyword/caption
 # text filtering keeps applying, before winding down to no filtering at all.
 # Coordinates are always blocked regardless of this window — that's a direct

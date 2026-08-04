@@ -157,9 +157,9 @@ without their admins seeing each other's activity, and without you having to
 hand-configure every group yourself:
 
 - Each chat's admins can run `/alarm_on`, `/alarm_off`, `/status`,
-  `/addkeyword`, `/unmute`, `/activate`, and `/addadmin` **only in their own
-  chat**, and only get DMs about their own chat's alarm/violation activity
-  — never another group's.
+  `/addkeyword`, `/unmute`, `/activate`, `/addadmin`, and `/violations`
+  **only in their own chat**, and only get DMs about their own chat's
+  alarm/violation activity — never another group's.
 - **`OWNER_IDS`** (you, the deployer) are admin in every chat and are the
   only ones told about bot-wide security events, like someone who isn't an
   admin trying to add the bot somewhere.
@@ -217,11 +217,40 @@ no persistent TCP connection to manage) so it survives:
    before — nothing else changes, the bot just re-loses this state on every
    restart like it always did.
 
-What's deliberately **not** persisted: per-user violation counts (window is
-minutes, not worth the write traffic) and which chats the bot has recently
-seen a message in (`known_chats`, rebuilt automatically the moment any
-message arrives — self-claimed chats are seeded into it immediately on
-hydration since they're already in the persisted admin list).
+What's deliberately **not** persisted: the short-window per-user violation
+*counter* used for auto-mute (window is minutes, not worth the write
+traffic) and which chats the bot has recently seen a message in
+(`known_chats`, rebuilt automatically the moment any message arrives —
+self-claimed chats are seeded into it immediately on hydration since
+they're already in the persisted admin list).
+
+The violation *audit log* (see
+[Reviewing repeat offenders](#reviewing-repeat-offenders) below) is a
+separate, durable, capped log — always Redis-backed when configured,
+regardless of the short-window counter above.
+
+## Reviewing repeat offenders
+
+Every flagged message (text, photo, video, live location) is appended to a
+durable per-chat log — timestamp, user id/username, matched reason, and the
+message text or caption (**never the photo/video itself** — storing copies
+of exactly the content this bot exists to suppress would just create a new
+leak vector if that log were ever compromised). Requires
+`UPSTASH_REDIS_REST_URL` to actually persist; without it the log still
+works but resets on every restart like everything else in-memory.
+
+- **`/violations [user_id]`** (chat admin, DM'd to the caller only): the
+  chat's recent log, or one user's if you pass an id.
+- **`REPORT_VIOLATION_THRESHOLD`** (default 10): when a user's *all-time*
+  logged-violation count in a chat crosses a multiple of this, admins get
+  DM'd to go review `/violations <user_id>`. This is independent of
+  `VIOLATION_THRESHOLD`'s short-window auto-mute — it's meant to surface a
+  *pattern* across many separate alarms (someone who posts once per alert
+  but does it at every single one) rather than a single burst.
+- The bot never escalates anything itself — this is an audit trail for a
+  human to review and decide, e.g., whether to report a suspected spotter
+  to the police. That decision, and any contact with authorities, is
+  entirely on the admin, not the bot.
 
 ## Reporting the bot's own downtime
 

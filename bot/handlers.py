@@ -18,6 +18,7 @@ from bot.config import (
     MAX_VIDEO_MB,
     OWNER_IDS,
     POST_ALARM_GRACE_SECONDS,
+    REPORT_VIOLATION_THRESHOLD,
     TRUSTED_BOT_IDS,
     VIOLATION_THRESHOLD,
     VIOLATION_WINDOW_SECONDS,
@@ -301,6 +302,47 @@ async def cmd_unmute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(f"User {user_id} unmuted.")
 
 
+def _format_violation_entry(e: dict) -> str:
+    when = datetime.fromtimestamp(e["ts"], tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    return f"{when} — @{e.get('username') or '?'} (id {e['user_id']}) — {e['reason']}\n  \"{e['text']}\""
+
+
+def _format_violation_report(entries: list[dict], user_id: int | None) -> str:
+    if not entries:
+        return "No logged violations for this chat" + (f" / user {user_id}." if user_id else ".")
+
+    shown = entries[-50:]  # most recent 50, avoid an unbounded message
+    header = f"{len(entries)} total entr{'y' if len(entries) == 1 else 'ies'}"
+    if len(entries) > 50:
+        header += " (showing most recent 50)"
+    body = "\n".join(_format_violation_entry(e) for e in shown)
+    return f"{header}:\n\n{body}"
+
+
+async def cmd_violations(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Chat-admin only, DM'd to the caller only. This is an audit trail for
+    a human to review and, if warranted, escalate outside the bot (e.g. to
+    police) — the bot never makes that call itself. /violations [user_id]:
+    all recent entries, or just one user's."""
+    chat_id = update.effective_chat.id
+    if not _is_admin(chat_id, update.effective_user.id):
+        return
+    if update.effective_chat.type != "private":
+        await _delete_silently(update.effective_message)
+
+    user_id = int(context.args[0]) if context.args and context.args[0].isdigit() else None
+    entries = await state.get_violation_log(chat_id, user_id)
+    text = _format_violation_report(entries, user_id)
+
+    try:
+        for chunk_start in range(0, len(text), 3500):
+            await context.bot.send_message(
+                chat_id=update.effective_user.id, text=text[chunk_start:chunk_start + 3500]
+            )
+    except Exception:
+        log.exception("failed to DM violation log to %s", update.effective_user.id)
+
+
 async def _register_chat_admin(context: ContextTypes.DEFAULT_TYPE, chat, user) -> None:
     await state.add_chat_admin(chat.id, user.id)
     state.register_chat(chat.id)
@@ -376,13 +418,36 @@ async def on_my_chat_member_update(update: Update, context: ContextTypes.DEFAULT
     )
 
 
-async def _track_violation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Repeat offenders (deliberate or careless insiders) get auto-muted
-    pending admin review, instead of just having each message deleted."""
+async def _track_violation(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, reason: str, text: str = ""
+) -> None:
+    """Two independent mechanisms on every flagged message:
+    1. Auto-mute on a short-window burst (existing) — fast reaction to
+       someone actively spamming right now.
+    2. A durable audit-log entry (text + metadata, no media — see
+       state.log_violation) plus a periodic admin notice once the user's
+       ALL-TIME count in this chat crosses a multiple of
+       REPORT_VIOLATION_THRESHOLD — for a pattern across many separate
+       alarms, e.g. a suspected spotter who never triggers the burst
+       threshold but keeps doing it every single alert. The bot never
+       decides anything here; it just gives the admin something to
+       review via /violations and escalate (e.g. to police) if warranted.
+    """
     user = update.effective_message.from_user
     chat_id = update.effective_chat.id
     if user is None or _is_admin(chat_id, user.id):
         return
+
+    await state.log_violation(chat_id, user.id, user.username, reason, text)
+    total = len(await state.get_violation_log(chat_id, user.id))
+    if total and total % REPORT_VIOLATION_THRESHOLD == 0:
+        await _notify_admins(
+            context, chat_id,
+            f"📋 Учасник @{user.username or '?'} (id {user.id}) має вже {total} "
+            f"зафіксованих порушень у цьому чаті за весь час. "
+            f"Перевірте: /violations {user.id}",
+        )
+
     count = state.record_violation(chat_id, user.id, VIOLATION_WINDOW_SECONDS)
     if count < VIOLATION_THRESHOLD:
         return
@@ -454,7 +519,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         update.effective_chat.id, _exposure_seconds(msg), verdict.reason,
     )
     await _warn(update)
-    await _track_violation(update, context)
+    await _track_violation(update, context, verdict.reason, msg.text or "")
 
 
 async def on_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -469,7 +534,9 @@ async def on_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         update.effective_chat.id, _exposure_seconds(msg),
     )
     await _warn(update)
-    await _track_violation(update, context)
+    loc = msg.location
+    loc_text = f"[live location: {loc.latitude},{loc.longitude}]" if loc else "[live location]"
+    await _track_violation(update, context, "live location shared", loc_text)
 
 
 async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -504,7 +571,7 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "blurred photo in chat %s after %.2fs exposure: %s",
         update.effective_chat.id, _exposure_seconds(msg), verdict.reason,
     )
-    await _track_violation(update, context)
+    await _track_violation(update, context, verdict.reason, msg.caption or "[photo, no caption]")
 
 
 async def on_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -524,7 +591,7 @@ async def on_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
         await _warn(update)
         log.info("deleted oversized video (%s bytes) in chat %s", video.file_size, update.effective_chat.id)
-        await _track_violation(update, context)
+        await _track_violation(update, context, "oversized video, deleted unblurred", msg.caption or "")
         return
 
     await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_VIDEO)
@@ -553,4 +620,4 @@ async def on_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "processed video in chat %s after %.2fs exposure: %s",
         update.effective_chat.id, _exposure_seconds(msg), verdict.reason,
     )
-    await _track_violation(update, context)
+    await _track_violation(update, context, verdict.reason, msg.caption or "[video, no caption]")
