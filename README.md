@@ -51,16 +51,18 @@ Install `ffmpeg` locally too (needed for video blurring) — e.g.
 `choco install ffmpeg` (Windows) or `apt install ffmpeg` (Linux). Without it,
 video blurring silently falls back to delete-without-repost.
 
-Copy `.env.example` to `.env`, fill in `BOT_TOKEN` (from @BotFather) and
-`ADMIN_IDS` (comma-separated Telegram numeric user IDs — get yours from
-@userinfobot), then load it and run:
+Copy `.env.example` to `.env`, fill in `BOT_TOKEN` (from @BotFather),
+`OWNER_IDS` (your numeric Telegram user ID — get it from @userinfobot), and
+`CHAT_ADMINS` (see [Multi-group deployments](#multi-group-deployments)
+below), then load it and run:
 
 ```
 export $(cat .env | xargs)   # or use a tool like direnv/python-dotenv
 python main.py
 ```
 
-Add the bot to your group and give it **delete messages** admin permission.
+Add the bot to your group and give it **delete messages** and **restrict
+members** admin permissions.
 
 ## Deploying to Render (free tier)
 
@@ -72,8 +74,9 @@ runtime can't install (no apt access), so deploy via the included
 2. On Render: **New → Web Service** → connect the repo → environment:
    **Docker** (it will auto-detect the `Dockerfile`).
 3. Set environment variables in the Render dashboard — see `.env.example`
-   for the full list (`BOT_TOKEN`, `ADMIN_IDS` are required; the rest are
-   optional with sane defaults). Leave `PORT` unset — Render injects it
+   for the full list (`BOT_TOKEN` and `OWNER_IDS` are required, `CHAT_ADMINS`
+   is what actually lets the bot serve a chat at all — see below; the rest
+   are optional with sane defaults). Leave `PORT` unset — Render injects it
    automatically and the app reads it from `$PORT`.
 4. Deploy. The service binds an HTTP server on `$PORT` (`bot/health.py`)
    purely so Render sees an open port and so an uptime pinger has something
@@ -123,6 +126,42 @@ threat over honoring a stale manual override), not a bug.
 Alarm mode set by the poller (`auto_armed`) auto-clears when the real alert
 ends. Alarm mode set manually via `/alarm_on` only clears via manual
 `/alarm_off` — the poller won't touch it.
+
+Note: `ALERTS_OBLAST_UID` is a single region for the whole deployment. If
+you're serving groups in different oblasts (see below), auto-arm only
+matches the one region configured — the rest still work fine with manual
+`/alarm_on`.
+
+## Multi-group deployments
+
+One deployed bot (one token) can serve several unrelated Telegram groups
+without their admins seeing each other's activity:
+
+- **`CHAT_ADMINS`** is both the allowlist and the notification map. A chat
+  not listed here isn't served at all — the bot leaves automatically the
+  moment it's added, and DMs the owners who added it. This matters because
+  it's one shared bot: without this, anyone who finds its username could
+  add it to their own group just to see how the filter reacts.
+- Each chat's admins can run `/alarm_on`, `/alarm_off`, `/status`,
+  `/addkeyword`, and `/unmute` **only in their own chat**, and only get
+  DMs about their own chat's alarm/violation activity — never another
+  group's.
+- **`OWNER_IDS`** (you, the deployer) are admin in every chat and are the
+  only ones told about bot-wide security events, like someone trying to
+  add the bot to a chat that isn't authorized.
+- `/allowbot` (whitelisting a bot account so it isn't auto-kicked on join)
+  is owner-only, since it exempts that bot account across every chat this
+  deployment serves — not just the one the command was run in.
+- The keyword list (`/addkeyword`, `bot/keywords.py`) is shared across all
+  chats, not per-group — any chat's admin extending it affects filtering
+  everywhere.
+
+Example, two groups with different admin teams:
+
+```
+OWNER_IDS=583805446
+CHAT_ADMINS=-1001111111111:222222222; -1002222222222:333333333,444444444
+```
 
 ## Tuning the filter
 

@@ -13,9 +13,10 @@ from telegram.ext import ApplicationHandlerStop, ContextTypes
 from bot import filters as classify
 from bot import keywords, media, state
 from bot.config import (
-    ADMIN_IDS,
     ALLOWED_CHAT_IDS,
+    CHAT_ADMINS,
     MAX_VIDEO_MB,
+    OWNER_IDS,
     TRUSTED_BOT_IDS,
     VIOLATION_THRESHOLD,
     VIOLATION_WINDOW_SECONDS,
@@ -35,8 +36,13 @@ _LOCKDOWN_PERMS = dict(
 log = logging.getLogger(__name__)
 
 
-def _is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
+def _admins_for(chat_id: int) -> set[int]:
+    """Owners are admin everywhere; each chat also has its own admin set."""
+    return CHAT_ADMINS.get(chat_id, set()) | OWNER_IDS
+
+
+def _is_admin(chat_id: int, user_id: int) -> bool:
+    return user_id in _admins_for(chat_id)
 
 
 def _is_allowed_chat(chat_id: int) -> bool:
@@ -58,14 +64,26 @@ def _exposure_seconds(msg) -> float:
     return (datetime.now(timezone.utc) - msg.date).total_seconds()
 
 
-async def _notify_admins(context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
-    """DM every configured admin instead of posting to the group, so ordinary
-    members never see when alarm mode is toggled."""
-    for admin_id in ADMIN_IDS:
+async def _notify_admins(context: ContextTypes.DEFAULT_TYPE, chat_id: int, text: str) -> None:
+    """DM only THIS chat's admins (+ owners), never the group. One bot can
+    serve several unrelated groups, so a group's admins must never see
+    another group's alarm activity."""
+    for admin_id in _admins_for(chat_id):
         try:
             await context.bot.send_message(chat_id=admin_id, text=text)
         except Exception:
             log.warning("could not DM admin %s (they may need to /start the bot first)", admin_id)
+
+
+async def _notify_owners(context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
+    """For bot-wide events that aren't scoped to any one chat (e.g. someone
+    adding this shared bot to an unauthorized group) — owners only, since
+    per-chat admins have no stake in chats other than their own."""
+    for owner_id in OWNER_IDS:
+        try:
+            await context.bot.send_message(chat_id=owner_id, text=text)
+        except Exception:
+            log.warning("could not DM owner %s (they may need to /start the bot first)", owner_id)
 
 
 async def _delete_silently(msg) -> None:
@@ -93,11 +111,12 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_admin(update.effective_user.id):
+    chat_id = update.effective_chat.id
+    if not _is_admin(chat_id, update.effective_user.id):
         return
     await _delete_silently(update.effective_message)
-    st = state.get(update.effective_chat.id)
-    await _notify_admins(context, f"Alarm mode: {'ON' if st.alarm_active else 'off'}")
+    st = state.get(chat_id)
+    await _notify_admins(context, chat_id, f"Alarm mode: {'ON' if st.alarm_active else 'off'}")
 
 
 async def activate_alarm(context: ContextTypes.DEFAULT_TYPE, chat_id: int, auto: bool = False) -> None:
@@ -139,7 +158,7 @@ async def activate_alarm(context: ContextTypes.DEFAULT_TYPE, chat_id: int, auto:
 
     source = "автоматично (alerts.in.ua)" if auto else "вручну"
     await _notify_admins(
-        context,
+        context, chat_id,
         f"🚨 Alarm mode ON ({source}) — фото/відео від учасників заблоковано на рівні чату, "
         "текст фільтрується реактивно." + lockdown_note
     )
@@ -161,25 +180,25 @@ async def deactivate_alarm(context: ContextTypes.DEFAULT_TYPE, chat_id: int, aut
         st.saved_permissions = None
 
     source = "автоматично (alerts.in.ua)" if auto else "вручну"
-    await _notify_admins(context, f"✅ Alarm mode off ({source})." + restore_note)
+    await _notify_admins(context, chat_id, f"✅ Alarm mode off ({source})." + restore_note)
 
 
 async def cmd_alarm_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_admin(update.effective_user.id):
+    if not _is_admin(update.effective_chat.id, update.effective_user.id):
         return
     await _delete_silently(update.effective_message)
     await activate_alarm(context, update.effective_chat.id, auto=False)
 
 
 async def cmd_alarm_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_admin(update.effective_user.id):
+    if not _is_admin(update.effective_chat.id, update.effective_user.id):
         return
     await _delete_silently(update.effective_message)
     await deactivate_alarm(context, update.effective_chat.id, auto=False)
 
 
 async def cmd_addkeyword(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_admin(update.effective_user.id):
+    if not _is_admin(update.effective_chat.id, update.effective_user.id):
         return
     if not context.args:
         await update.message.reply_text("Usage: /addkeyword <термін> [location]")
@@ -187,11 +206,16 @@ async def cmd_addkeyword(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     tier = "location" if context.args[-1] == "location" else "strike"
     term = " ".join(context.args[:-1] if tier == "location" else context.args)
     keywords.add_term(term, tier)
-    await update.message.reply_text(f"Added \"{term}\" to {tier} keywords.")
+    await update.message.reply_text(
+        f"Added \"{term}\" to {tier} keywords. Note: this list is shared across "
+        "every chat this bot serves, not just yours."
+    )
 
 
 async def cmd_allowbot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_admin(update.effective_user.id):
+    # Owners only, not per-chat admins: this whitelists a bot across every
+    # chat the deployment serves, not just the one the command was run in.
+    if update.effective_user.id not in OWNER_IDS:
         return
     if not context.args or not context.args[0].isdigit():
         await update.message.reply_text("Usage: /allowbot <bot_id>")
@@ -202,13 +226,13 @@ async def cmd_allowbot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def cmd_unmute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_admin(update.effective_user.id):
+    chat_id = update.effective_chat.id
+    if not _is_admin(chat_id, update.effective_user.id):
         return
     if not context.args or not context.args[0].isdigit():
         await update.message.reply_text("Usage: /unmute <user_id>")
         return
     user_id = int(context.args[0])
-    chat_id = update.effective_chat.id
     try:
         chat = await context.bot.get_chat(chat_id)
         await context.bot.restrict_chat_member(
@@ -239,7 +263,7 @@ async def on_my_chat_member_update(update: Update, context: ContextTypes.DEFAULT
             await context.bot.leave_chat(chat_id)
         except Exception:
             log.exception("failed to leave unauthorized chat %s", chat_id)
-        await _notify_admins(
+        await _notify_owners(
             context,
             "🔒 Bot was added to an unauthorized chat and left automatically.\n"
             f"Chat: {cmu.chat.title or cmu.chat.type} (id {chat_id})\n"
@@ -254,9 +278,9 @@ async def _track_violation(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     """Repeat offenders (deliberate or careless insiders) get auto-muted
     pending admin review, instead of just having each message deleted."""
     user = update.effective_message.from_user
-    if user is None or _is_admin(user.id):
-        return
     chat_id = update.effective_chat.id
+    if user is None or _is_admin(chat_id, user.id):
+        return
     count = state.record_violation(chat_id, user.id, VIOLATION_WINDOW_SECONDS)
     if count < VIOLATION_THRESHOLD:
         return
@@ -269,7 +293,7 @@ async def _track_violation(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         log.exception("failed to restrict repeat offender %s in chat %s", user.id, chat_id)
         return
     await _notify_admins(
-        context,
+        context, chat_id,
         f"🚫 Учасника @{user.username or '?'} (id {user.id}) обмежено після "
         f"{count} порушень за останні {VIOLATION_WINDOW_SECONDS // 60} хв. "
         f"Перевірте вручну: /unmute {user.id}",
@@ -304,7 +328,7 @@ async def on_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TY
 
     log.info("kicked unauthorized bot %s from chat %s", user.id, chat_id)
     await _notify_admins(
-        context,
+        context, chat_id,
         f"🤖⛔ Видалено неавторизований бот із групи: "
         f"@{user.username or '?'} (id {user.id}). "
         f"Якщо це довірений бот — /allowbot {user.id}, потім додай його знову.",

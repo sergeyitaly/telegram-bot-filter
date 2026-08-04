@@ -6,17 +6,33 @@ def _int_list(raw: str) -> set[int]:
     return {int(x) for x in raw.split(",") if x.strip()}
 
 
+def _parse_chat_admins(raw: str) -> dict[int, set[int]]:
+    """'-100111:11,22; -100222:33' -> {-100111: {11,22}, -100222: {33}}."""
+    result: dict[int, set[int]] = {}
+    for entry in raw.split(";"):
+        entry = entry.strip()
+        if not entry:
+            continue
+        chat_str, _, admins_str = entry.partition(":")
+        result[int(chat_str.strip())] = _int_list(admins_str)
+    return result
+
+
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 
-# Telegram user IDs allowed to run /alarm_on, /alarm_off, /addkeyword, /removekeyword.
-ADMIN_IDS = _int_list(os.environ.get("ADMIN_IDS", ""))
+# The bot deployer(s): always admin in every chat, and the only ones notified
+# about bot-wide security events (e.g. an unauthorized chat add) since those
+# aren't scoped to any one group.
+OWNER_IDS = _int_list(os.environ.get("OWNER_IDS", ""))
 
-# Chat IDs this bot is allowed to operate in. If set, the bot auto-leaves any
-# other chat it's added to (and DMs the admins who added it) instead of
-# filtering there — this is a single deployed bot with one token, so anyone
-# could otherwise add it to their own group and probe how the filter reacts.
-# Leave empty to allow any chat (fine for a private test deployment).
-ALLOWED_CHAT_IDS = _int_list(os.environ.get("ALLOWED_CHAT_IDS", ""))
+# Per-chat admins: "chat_id:user_id,user_id; chat_id:user_id". Each chat's
+# admins can run /alarm_on etc. and get DMs ONLY about their own chat — one
+# bot deployment can serve several unrelated groups without their admins
+# seeing each other's alarm activity. A chat not listed here isn't served at
+# all: the bot auto-leaves it (see on_my_chat_member_update) rather than
+# letting anyone add this single shared bot to their own group to probe it.
+CHAT_ADMINS = _parse_chat_admins(os.environ.get("CHAT_ADMINS", ""))
+ALLOWED_CHAT_IDS = set(CHAT_ADMINS.keys())
 
 # Bot accounts allowed to join without being auto-kicked (e.g. other moderation
 # bots you deliberately add). Extendable at runtime via /allowbot.
