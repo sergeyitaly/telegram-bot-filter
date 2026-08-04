@@ -649,6 +649,113 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _track_violation(update, context, verdict.reason, msg.caption or "[photo, no caption]")
 
 
+def _document_kind(document) -> str:
+    """'photo'/'video' for an image/video sent uncompressed as a file (the
+    two-tap way to skip client-side compression, and — before this handler
+    existed — skip this bot's filtering entirely); 'other' otherwise."""
+    mime = (document.mime_type or "").lower()
+    name = (document.file_name or "").lower()
+    if mime.startswith("image/") or name.endswith((".jpg", ".jpeg", ".png", ".webp", ".bmp", ".heic")):
+        return "photo"
+    if mime.startswith("video/") or name.endswith((".mp4", ".mov", ".mkv", ".avi", ".webm")):
+        return "video"
+    return "other"
+
+
+async def _delete_flagged_document(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, verdict, caption_or_name: str, log_msg: str
+) -> None:
+    """No way to blur an arbitrary file or an oversized one — delete outright."""
+    msg = update.effective_message
+    try:
+        await msg.delete()
+    except Exception:
+        log.exception("failed to delete document")
+        return
+    await _warn(update)
+    log.info(log_msg)
+    await _track_violation(update, context, verdict.reason, caption_or_name)
+
+
+async def _blur_flagged_document(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, doc, kind: str, verdict, caption_or_name: str
+) -> None:
+    msg = update.effective_message
+    chat_id = update.effective_chat.id
+    action = ChatAction.UPLOAD_PHOTO if kind == "photo" else ChatAction.UPLOAD_VIDEO
+    await context.bot.send_chat_action(chat_id, action)
+    ext = "jpg" if kind == "photo" else "mp4"
+    with tempfile.TemporaryDirectory() as tmp:
+        src = os.path.join(tmp, f"in.{ext}")
+        dst = os.path.join(tmp, f"out.{ext}")
+        tg_file = await doc.get_file()
+        await tg_file.download_to_drive(src)
+
+        if kind == "photo":
+            await asyncio.to_thread(media.blur_photo, src, dst)
+            blurred_ok = True
+        else:
+            blurred_ok = await media.blur_video(src, dst)
+
+        try:
+            await msg.delete()
+        except Exception:
+            log.exception("failed to delete flagged document")
+            return
+
+        if blurred_ok:
+            sender = context.bot.send_photo if kind == "photo" else context.bot.send_video
+            file_kw = "photo" if kind == "photo" else "video"
+            await sender(
+                chat_id=chat_id,
+                **{file_kw: open(dst, "rb")},
+                caption=f"🔒 Заблюрено ({verdict.reason}), надіслано як файл.\n{WARNING_TEXT}",
+            )
+        else:
+            await _warn(update)
+    log.info(
+        "processed %s-document in chat %s after %.2fs exposure: %s",
+        kind, chat_id, _exposure_seconds(msg), verdict.reason,
+    )
+    await _track_violation(update, context, verdict.reason, caption_or_name or f"[{kind} document, no caption]")
+
+
+async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """A document is Telegram's "send without compression" path — the same
+    photo/video content, just a different message type, and previously
+    invisible to this bot entirely (no handler existed at all). Route
+    image/video documents through the same blur pipeline as native
+    photos/videos; anything else gets classified on caption + filename
+    (a suspicious filename is its own leak) and deleted outright, since
+    there's no way to blur an arbitrary file."""
+    msg = update.effective_message
+    doc = msg.document
+    chat_id = update.effective_chat.id
+    st = state.get(chat_id)
+    caption_or_name = msg.caption or doc.file_name or ""
+    verdict = classify.classify_media(caption_or_name, st.alarm_active, _strict_mode(chat_id, st))
+    if not verdict.flagged:
+        return
+
+    kind = _document_kind(doc)
+
+    if kind == "other":
+        await _delete_flagged_document(
+            update, context, verdict, caption_or_name or "[document, no caption/name]",
+            f"deleted flagged document in chat {chat_id}: {verdict.reason}",
+        )
+        return
+
+    if doc.file_size and doc.file_size > MAX_VIDEO_MB * 1024 * 1024:
+        await _delete_flagged_document(
+            update, context, verdict, caption_or_name,
+            f"deleted oversized {kind}-document ({doc.file_size} bytes) in chat {chat_id}",
+        )
+        return
+
+    await _blur_flagged_document(update, context, doc, kind, verdict, caption_or_name)
+
+
 async def on_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.effective_message
     video = msg.video or msg.video_note

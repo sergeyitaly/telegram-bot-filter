@@ -19,6 +19,10 @@ STRIKE_TERMS = [
     r"уламк", r"збил[иао]", r"падінн\w* уламків", r"детонац",
     r"руйнуванн", r"пожежа після удару", r"вибух", r"вибухи", r"вибухнул",
     r"дим над", r"горить будинок", r"приліт[іу]в", r"поранен", r"загибл", r"жертв",
+    # Slang/euphemisms specifically used to talk around strike-result
+    # moderation — "бавовна" ("cotton") is the dominant one on Ukrainian
+    # Telegram, precisely because plain wording gets filtered.
+    r"бавовн", r"хлопок", r"хлопнул",
     # Russian
     r"прилет", r"попадани", r"последстви\w* удара", r"последстви\w* атаки",
     r"обломк", r"взрыв", r"разрушени", r"пожар после удара", r"сбил[иао]",
