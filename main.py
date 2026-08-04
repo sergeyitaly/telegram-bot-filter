@@ -65,9 +65,9 @@ def build_application() -> Application:
     app.add_handler(ChatMemberHandler(handlers.on_chat_member_update, ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(ChatMemberHandler(handlers.on_my_chat_member_update, ChatMemberHandler.MY_CHAT_MEMBER))
 
+    # LOCATION catches both live-location and venue messages — Telegram sets
+    # message.location on both types, so no separate venue handler is needed.
     app.add_handler(MessageHandler(filters.LOCATION, handlers.on_location))
-    # Venue messages carry embedded coordinates — reuse the location handler.
-    app.add_handler(MessageHandler(filters.Venue.ALL, handlers.on_location))
     app.add_handler(MessageHandler(filters.PHOTO, handlers.on_photo))
     app.add_handler(MessageHandler(filters.VIDEO | filters.VIDEO_NOTE, handlers.on_video))
     # Animation (GIF) — same blur/delete pipeline as regular video.
