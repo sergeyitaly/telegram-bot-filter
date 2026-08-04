@@ -96,6 +96,10 @@ def claimed_admins_for(chat_id: int) -> set[int]:
     return _claimed_admins.get(chat_id, set())
 
 
+def all_claimed_chat_ids() -> set[int]:
+    return set(_claimed_admins.keys())
+
+
 async def add_chat_admin(chat_id: int, user_id: int) -> None:
     _claimed_admins.setdefault(chat_id, set()).add(user_id)
     await _persist_claimed_admins()

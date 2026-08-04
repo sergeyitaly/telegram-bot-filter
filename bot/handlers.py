@@ -14,6 +14,7 @@ from bot import filters as classify
 from bot import keywords, media, state
 from bot.config import (
     ALLOWED_CHAT_IDS,
+    AUTO_KICK_ON_REPORT_THRESHOLD,
     CHAT_ADMINS,
     MAX_VIDEO_MB,
     OWNER_IDS,
@@ -270,6 +271,42 @@ async def cmd_listkeywords(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         log.exception("failed to DM keyword list to owner %s", update.effective_user.id)
 
 
+async def cmd_mychats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Owner-only, DM'd to the caller only: every chat this deployment is
+    currently authorized in — env-hardcoded CHAT_ADMINS plus self-service
+    claimed chats. Best-effort per chat: one being unreachable (e.g. the
+    bot was removed outside its own auto-leave path) doesn't hide the rest."""
+    if update.effective_user.id not in OWNER_IDS:
+        return
+    if update.effective_chat.type != "private":
+        await _delete_silently(update.effective_message)
+
+    chat_ids = sorted(ALLOWED_CHAT_IDS | state.all_claimed_chat_ids())
+    if not chat_ids:
+        await context.bot.send_message(chat_id=update.effective_user.id, text="No authorized chats yet.")
+        return
+
+    lines = []
+    for chat_id in chat_ids:
+        admins = _admins_for(chat_id) - OWNER_IDS
+        source = "CHAT_ADMINS" if chat_id in ALLOWED_CHAT_IDS else "self-service"
+        try:
+            chat = await context.bot.get_chat(chat_id)
+            title = chat.title or chat.type
+        except Exception:
+            title = "⚠️ unreachable (bot may have been removed)"
+        lines.append(f"{title} (id {chat_id})\n  source: {source}, admins: {sorted(admins) or 'none'}")
+
+    text = f"{len(chat_ids)} authorized chat(s):\n\n" + "\n".join(lines)
+    try:
+        for chunk_start in range(0, len(text), 3500):
+            await context.bot.send_message(
+                chat_id=update.effective_user.id, text=text[chunk_start:chunk_start + 3500]
+            )
+    except Exception:
+        log.exception("failed to DM chat list to owner %s", update.effective_user.id)
+
+
 async def cmd_allowbot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Owners only, not per-chat admins: this whitelists a bot across every
     # chat the deployment serves, not just the one the command was run in.
@@ -418,6 +455,41 @@ async def on_my_chat_member_update(update: Update, context: ContextTypes.DEFAULT
     )
 
 
+async def _kick_repeat_offender(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user, total: int) -> None:
+    """Remove (not ban — they can rejoin via invite link) a user whose
+    all-time violation count crossed REPORT_VIOLATION_THRESHOLD, and DM them
+    why. DM'ing first since it may well fail silently (most members have
+    never started a chat with the bot) — the removal itself doesn't depend
+    on that succeeding."""
+    try:
+        await context.bot.send_message(
+            chat_id=user.id,
+            text=(
+                "⛔ Тебе видалено з групи автоматично.\n\n"
+                f"Причина: {total} зафіксованих випадків публікації вмісту, "
+                "що стосується наслідків ударів/тривог (координати, адреси, фото/відео "
+                "з місць ударів), який автоматично блокується для безпеки учасників.\n\n"
+                "Якщо вважаєш це помилкою — зв'яжись з адміністрацією групи."
+            ),
+        )
+    except Exception:
+        log.info("could not DM removed user %s (likely never started the bot)", user.id)
+
+    try:
+        await context.bot.ban_chat_member(chat_id, user.id)
+        await context.bot.unban_chat_member(chat_id, user.id, only_if_banned=True)
+    except Exception:
+        log.exception("failed to kick repeat offender %s from chat %s", user.id, chat_id)
+        return
+
+    await _notify_admins(
+        context, chat_id,
+        f"⛔ Учасника @{user.username or '?'} (id {user.id}) видалено з групи "
+        f"після {total} зафіксованих порушень за весь час. Може повернутись "
+        f"за посиланням-запрошенням. Деталі: /violations {user.id}",
+    )
+
+
 async def _track_violation(
     update: Update, context: ContextTypes.DEFAULT_TYPE, reason: str, text: str = ""
 ) -> None:
@@ -441,12 +513,15 @@ async def _track_violation(
     await state.log_violation(chat_id, user.id, user.username, reason, text)
     total = len(await state.get_violation_log(chat_id, user.id))
     if total and total % REPORT_VIOLATION_THRESHOLD == 0:
-        await _notify_admins(
-            context, chat_id,
-            f"📋 Учасник @{user.username or '?'} (id {user.id}) має вже {total} "
-            f"зафіксованих порушень у цьому чаті за весь час. "
-            f"Перевірте: /violations {user.id}",
-        )
+        if AUTO_KICK_ON_REPORT_THRESHOLD:
+            await _kick_repeat_offender(context, chat_id, user, total)
+        else:
+            await _notify_admins(
+                context, chat_id,
+                f"📋 Учасник @{user.username or '?'} (id {user.id}) має вже {total} "
+                f"зафіксованих порушень у цьому чаті за весь час. "
+                f"Перевірте: /violations {user.id}",
+            )
 
     count = state.record_violation(chat_id, user.id, VIOLATION_WINDOW_SECONDS)
     if count < VIOLATION_THRESHOLD:

@@ -163,11 +163,12 @@ hand-configure every group yourself:
 - **`OWNER_IDS`** (you, the deployer) are admin in every chat and are the
   only ones told about bot-wide security events, like someone who isn't an
   admin trying to add the bot somewhere.
-- `/allowbot` and `/listkeywords` are owner-only: `/allowbot` exempts a bot
-  account across every chat this deployment serves, not just the one the
-  command was run in, and `/listkeywords` exposes the exact filter
+- `/allowbot`, `/listkeywords`, and `/mychats` are owner-only: `/allowbot`
+  exempts a bot account across every chat this deployment serves, not just
+  the one the command was run in; `/listkeywords` exposes the exact filter
   wordlist — a much wider trust boundary than any one chat's admins should
-  have (see [Tuning the filter](#tuning-the-filter)).
+  have (see [Tuning the filter](#tuning-the-filter)); `/mychats` lists
+  every chat the deployment is authorized in.
 - The keyword list (`/addkeyword`, `bot/keywords.py`) is shared across all
   chats, not per-group — any chat's admin extending it affects filtering
   everywhere.
@@ -241,16 +242,28 @@ works but resets on every restart like everything else in-memory.
 
 - **`/violations [user_id]`** (chat admin, DM'd to the caller only): the
   chat's recent log, or one user's if you pass an id.
+- **`/mychats`** (owner-only, DM'd to the caller only): every chat this
+  deployment is currently authorized in, with title and admins — a
+  registration lost to a restart (self-service, no `UPSTASH_REDIS_REST_URL`
+  configured) won't show up until re-`/activate`d.
 - **`REPORT_VIOLATION_THRESHOLD`** (default 10): when a user's *all-time*
   logged-violation count in a chat crosses a multiple of this, admins get
   DM'd to go review `/violations <user_id>`. This is independent of
   `VIOLATION_THRESHOLD`'s short-window auto-mute — it's meant to surface a
   *pattern* across many separate alarms (someone who posts once per alert
   but does it at every single one) rather than a single burst.
-- The bot never escalates anything itself — this is an audit trail for a
-  human to review and decide, e.g., whether to report a suspected spotter
-  to the police. That decision, and any contact with authorities, is
-  entirely on the admin, not the bot.
+- By default the bot never escalates anything itself — this is an audit
+  trail for a human to review and decide, e.g., whether to report a
+  suspected spotter to the police. That decision, and any contact with
+  authorities, is entirely on the admin, not the bot.
+- **`AUTO_KICK_ON_REPORT_THRESHOLD`** (default off) opts into automating
+  the last step: crossing a `REPORT_VIOLATION_THRESHOLD` multiple removes
+  (not bans — they can rejoin via invite link) the user from that chat and
+  DMs them why, instead of just notifying admins. This is a single global
+  setting for every chat the deployment serves. Weigh it deliberately
+  before enabling: the filter has real false-positive risk (see
+  `bot/keywords.py`), and an automated removal from a community is a much
+  bigger step than an admin notification alone.
 
 ## Reporting the bot's own downtime
 

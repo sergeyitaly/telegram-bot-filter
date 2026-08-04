@@ -62,6 +62,16 @@ VIOLATION_WINDOW_SECONDS = int(os.environ.get("VIOLATION_WINDOW_SECONDS", "600")
 # <user_id> and decide whether escalation (e.g. to police) is warranted.
 REPORT_VIOLATION_THRESHOLD = int(os.environ.get("REPORT_VIOLATION_THRESHOLD", "10"))
 
+# If true, crossing REPORT_VIOLATION_THRESHOLD also kicks the user from that
+# chat (removed, not banned — they can rejoin via invite link) and DMs them
+# privately why. Off by default: the filter has real false-positive risk
+# (see bot/keywords.py), and an automated removal from a community based on
+# an imperfect keyword match is a much bigger step than the admin
+# notification alone. Opt in deliberately, and only if you've weighed that
+# tradeoff for your own chat(s) — this is a single global setting for every
+# chat this deployment serves, not configurable per chat.
+AUTO_KICK_ON_REPORT_THRESHOLD = os.environ.get("AUTO_KICK_ON_REPORT_THRESHOLD", "").lower() in ("1", "true", "yes")
+
 # How long after alarm mode turns off (відбій) strike-result keyword/caption
 # text filtering keeps applying, before winding down to no filtering at all.
 # Coordinates are always blocked regardless of this window — that's a direct
