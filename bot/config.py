@@ -90,7 +90,7 @@ ALERTS_API_TOKEN = os.environ.get("ALERTS_API_TOKEN", "")
 # Київська область = 73,74,75,76,77,78,79, its 7 raions). Find UIDs for your
 # region at https://devs.alerts.in.ua/.
 ALERTS_OBLAST_UIDS = {u.strip() for u in os.environ.get("ALERTS_OBLAST_UID", "").split(",") if u.strip()}
-ALERTS_POLL_SECONDS = int(os.environ.get("ALERTS_POLL_SECONDS", "60"))
+ALERTS_POLL_SECONDS = int(os.environ.get("ALERTS_POLL_SECONDS", "15"))
 
 # Optional: retrospectively DM owners about downtime UptimeRobot recorded for
 # this bot's own /health monitor. This can only ever be retrospective — code

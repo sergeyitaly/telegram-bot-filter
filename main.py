@@ -66,10 +66,17 @@ def build_application() -> Application:
     app.add_handler(ChatMemberHandler(handlers.on_my_chat_member_update, ChatMemberHandler.MY_CHAT_MEMBER))
 
     app.add_handler(MessageHandler(filters.LOCATION, handlers.on_location))
+    # Venue messages carry embedded coordinates — reuse the location handler.
+    app.add_handler(MessageHandler(filters.Venue.ALL, handlers.on_location))
     app.add_handler(MessageHandler(filters.PHOTO, handlers.on_photo))
     app.add_handler(MessageHandler(filters.VIDEO | filters.VIDEO_NOTE, handlers.on_video))
+    # Animation (GIF) — same blur/delete pipeline as regular video.
+    app.add_handler(MessageHandler(filters.ANIMATION, handlers.on_video))
     app.add_handler(MessageHandler(filters.Document.ALL, handlers.on_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.on_text))
+    # Voice and audio: delete during alarm, admin-alert during grace.
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handlers.on_voice))
+    # Polls and stickers: routed through the deny-by-default catch-all below.
 
     # Edited messages: same classification pipeline — without these, editing a
     # flagged message after posting is a trivial bypass for all text/media filters.
@@ -77,7 +84,14 @@ def build_application() -> Application:
     app.add_handler(MessageHandler(_edited & (filters.TEXT & ~filters.COMMAND), handlers.on_text))
     app.add_handler(MessageHandler(_edited & filters.PHOTO, handlers.on_photo))
     app.add_handler(MessageHandler(_edited & (filters.VIDEO | filters.VIDEO_NOTE), handlers.on_video))
+    app.add_handler(MessageHandler(_edited & filters.ANIMATION, handlers.on_video))
     app.add_handler(MessageHandler(_edited & filters.Document.ALL, handlers.on_document))
+    app.add_handler(MessageHandler(_edited & (filters.VOICE | filters.AUDIO), handlers.on_voice))
+
+    # Deny-by-default catch-all in group 1 (runs after all specific handlers
+    # above). During active alarm: deletes any message type not explicitly handled
+    # so future Telegram API additions cannot silently create a bypass.
+    app.add_handler(MessageHandler(filters.ALL, handlers.on_alarm_catchall), group=1)
 
     if ALERTS_API_TOKEN and ALERTS_OBLAST_UIDS:
         app.job_queue.run_repeating(air_alert.poll, interval=ALERTS_POLL_SECONDS, first=10)

@@ -50,10 +50,34 @@ LOCATION_TERMS = [
     r"\bул\.", r"улиц[аы]", r"перекрёст", r"перекресток", r"дом №?\s*\d",
 ]
 
-# lat,long shared as plain text (native Telegram location pins are handled separately).
-# {2,6} decimal digits: catches common 2-decimal precision (e.g. 50.45, 30.52) that
-# the previous {3,6} minimum silently missed.
+# lat,long as decimal degrees — comma-separated.
 COORDINATE_RE = re.compile(r"-?\d{1,3}[.,]\d{2,6}\s*,\s*-?\d{1,3}[.,]\d{2,6}")
+
+# Degrees-minutes-seconds: 50°27'18"N 30°31'24"E (various Unicode quote chars)
+_DMS_RE = re.compile(
+    r"\d{1,3}[°º]\s*\d{1,2}[\u0027\u2019\u02bc\u2032\u0060]"
+    r"\s*(?:\d{1,2}[\u0022\u201d\u2033]?)?\s*[NSns]"
+    r"\s*[,;]?\s*"
+    r"\d{1,3}[°º]\s*\d{1,2}[\u0027\u2019\u02bc\u2032\u0060]"
+    r"\s*(?:\d{1,2}[\u0022\u201d\u2033]?)?\s*[EWew]",
+    re.IGNORECASE,
+)
+
+# Google Open Location Code / Plus Code: 8G7G+XH or 8FVC+G2 Kyiv
+_PLUS_CODE_RE = re.compile(
+    r"\b[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,3}\b"
+)
+
+# Map service URLs — link preview reveals location before the message is deleted
+_MAP_URL_RE = re.compile(
+    r"(maps\.google\.|goo\.gl/maps|maps\.app\.goo\.gl|google\.com/maps"
+    r"|maps\.me/|waze\.com|maps\.apple\.|openstreetmap\.org"
+    r"|mapy\.cz|yandex\.\w{2,}/maps|2gis\.com|maps2\.by)",
+    re.IGNORECASE,
+)
+
+# Generic https:// URLs — used to detect news-article links during active alarm
+_URL_RE = re.compile(r"https?://\S{8,}", re.IGNORECASE)
 
 _STRIKE_RE = re.compile("|".join(STRIKE_TERMS), re.IGNORECASE)
 _LOCATION_RE = re.compile("|".join(LOCATION_TERMS), re.IGNORECASE)
@@ -111,4 +135,18 @@ def has_location_term(text: str) -> bool:
 
 
 def has_coordinates(text: str) -> bool:
-    return bool(text) and bool(COORDINATE_RE.search(text))
+    return bool(text) and (
+        bool(COORDINATE_RE.search(text))
+        or bool(_DMS_RE.search(text))
+        or bool(_PLUS_CODE_RE.search(text))
+    )
+
+
+def has_map_url(text: str) -> bool:
+    """True if the text contains a link to a map service."""
+    return bool(text) and bool(_MAP_URL_RE.search(text))
+
+
+def has_url(text: str) -> bool:
+    """True if the text contains any https:// URL."""
+    return bool(text) and bool(_URL_RE.search(text))

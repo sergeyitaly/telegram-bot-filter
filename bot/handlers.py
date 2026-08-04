@@ -538,20 +538,26 @@ async def _track_violation(
     update: Update, context: ContextTypes.DEFAULT_TYPE, reason: str, text: str = ""
 ) -> None:
     """Two independent mechanisms on every flagged message:
-    1. Auto-mute on a short-window burst (existing) — fast reaction to
-       someone actively spamming right now.
-    2. A durable audit-log entry (text + metadata, no media — see
-       state.log_violation) plus a periodic admin notice once the user's
-       ALL-TIME count in this chat crosses a multiple of
-       REPORT_VIOLATION_THRESHOLD — for a pattern across many separate
-       alarms, e.g. a suspected spotter who never triggers the burst
-       threshold but keeps doing it every single alert. The bot never
-       decides anything here; it just gives the admin something to
-       review via /violations and escalate (e.g. to police) if warranted.
+    1. Auto-mute on a short-window burst — fast reaction to active spamming.
+    2. A durable audit-log entry plus a periodic admin notice once the
+       user's ALL-TIME count crosses a multiple of REPORT_VIOLATION_THRESHOLD.
+
+    Admins are exempt from auto-delete and auto-mute, but their flagged
+    content is still audit-logged and the chat's other admins are notified —
+    an admin account is a higher-value target for social engineering.
     """
     user = update.effective_message.from_user
     chat_id = update.effective_chat.id
-    if user is None or _is_admin(chat_id, user.id):
+    if user is None:
+        return
+    if _is_admin(chat_id, user.id):
+        log.warning("admin %s posted flagged content in chat %s: %s", user.id, chat_id, reason)
+        await _notify_admins(
+            context, chat_id,
+            f"⚠️ Адмін @{user.username or '?'} (id {user.id}) надіслав вміст, "
+            f"що відповідає фільтру ({reason}):\n\"{text[:200]}\"\n"
+            f"Адміни звільнені від автовидалення, але це зафіксовано.",
+        )
         return
 
     await state.log_violation(chat_id, user.id, user.username, reason, text)
@@ -625,9 +631,25 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.effective_message
     chat_id = update.effective_chat.id
     st = state.get(chat_id)
-    verdict = classify.classify_text(msg.text, _strict_mode(chat_id, st))
+    strict = _strict_mode(chat_id, st)
+    verdict = classify.classify_text(msg.text, strict, alarm_active=st.alarm_active)
+
+    # Sliding context window: re-classify with recent messages from the same
+    # user to catch coordinates or keywords split across 2-3 messages.
+    if not verdict.flagged and strict and msg.from_user:
+        ctx = state.get_user_context(chat_id, msg.from_user.id, msg.text or "")
+        if len(ctx) > len(msg.text or ""):
+            ctx_verdict = classify.classify_text(ctx, strict, alarm_active=st.alarm_active)
+            if ctx_verdict.flagged:
+                verdict = classify.Verdict(True, ctx_verdict.reason + " (split across messages)")
+
     if not verdict.flagged:
+        # Still record in buffer even for clean messages, so future messages
+        # have context — but only in strict mode to avoid unbounded growth.
+        if strict and msg.from_user:
+            state.get_user_context(chat_id, msg.from_user.id, msg.text or "")
         return
+
     try:
         await msg.delete()
     except Exception:
@@ -639,6 +661,55 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     await _warn(update)
     await _track_violation(update, context, verdict.reason, msg.text or "")
+
+
+async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Voice/audio messages: delete during active alarm (no transcription available
+    so we can't know the content); DM-alert admins during grace period."""
+    msg = update.effective_message
+    chat_id = update.effective_chat.id
+    st = state.get(chat_id)
+    if st.alarm_active:
+        try:
+            await msg.delete()
+        except Exception:
+            log.exception("failed to delete voice/audio during alarm")
+            return
+        log.info("deleted voice/audio in chat %s during alarm", chat_id)
+        await _warn(update)
+        await _track_violation(update, context, "voice/audio during active alarm", "[audio]")
+    elif _strict_mode(chat_id, st):
+        username = msg.from_user.username if msg.from_user else None
+        await _notify_admins(
+            context, chat_id,
+            f"🎙 @{username or '?'} надіслав голосове/аудіо під час вікна "
+            f"фільтрації — перевірте вміст вручну, автотранскрипція відсутня.",
+        )
+
+
+async def on_alarm_catchall(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Deny-by-default catch-all registered in handler group 1 (runs after all
+    specific handlers). Deletes any message type that has no explicit handler
+    while alarm mode is active, so adding a new Telegram message type cannot
+    silently create a bypass."""
+    msg = update.effective_message
+    chat_id = update.effective_chat.id
+    st = state.get(chat_id)
+    if not st.alarm_active:
+        return
+    try:
+        await msg.delete()
+    except Exception:
+        log.warning("catch-all: could not delete unhandled type in chat %s", chat_id)
+        return
+    log.info(
+        "catch-all deleted unhandled message type in chat %s after %.2fs",
+        chat_id, _exposure_seconds(msg),
+    )
+    await _warn(update)
+    caption = getattr(msg, "caption", "") or ""
+    await _track_violation(update, context, "unhandled message type during alarm",
+                           caption or "[no text]")
 
 
 async def on_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -9,6 +9,7 @@ restart); the violation *audit log* (log_violation/get_violation_log) is
 durable and Redis-backed on purpose — it exists specifically so it survives
 for a chat admin to review later.
 """
+import collections
 import inspect
 import time
 from dataclasses import dataclass
@@ -68,6 +69,12 @@ _known_chats: set[int] = set()
 
 # Rolling per-(chat, user) violation timestamps for repeat-offender muting.
 _violations: dict[tuple[int, int], list[float]] = {}
+
+# Sliding text buffer for split-message coordinate/keyword detection.
+# Keyed by (chat_id, user_id); each entry is (monotonic_time, text).
+_user_text_buffer: dict[tuple[int, int], collections.deque] = {}
+_CONTEXT_WINDOW_SECONDS = 30
+_CONTEXT_MAX_MESSAGES = 5
 
 # Chats self-activated at runtime (auto-registered when a verified admin
 # adds the bot, or via /addadmin), plus their admins. Merged with the
@@ -170,6 +177,21 @@ def unregister_chat(chat_id: int) -> None:
 
 def known_chats() -> set[int]:
     return set(_known_chats)
+
+
+def get_user_context(chat_id: int, user_id: int, new_text: str) -> str:
+    """Append new_text to the user's recent message buffer and return the
+    concatenated context string. Lets the classifier detect coordinates or
+    keywords that were deliberately split across multiple messages."""
+    key = (chat_id, user_id)
+    now = time.monotonic()
+    buf = _user_text_buffer.setdefault(key, collections.deque())
+    while buf and now - buf[0][0] > _CONTEXT_WINDOW_SECONDS:
+        buf.popleft()
+    buf.append((now, new_text))
+    if len(buf) > _CONTEXT_MAX_MESSAGES:
+        buf.popleft()
+    return " ".join(t for _, t in buf)
 
 
 def record_violation(chat_id: int, user_id: int, window_seconds: int) -> int:
