@@ -166,6 +166,9 @@ Defined in `.mcp.json` (project root), auto-approved via `enableAllProjectMcpSer
 |---|---|
 | `telegram-bot-api` | Live Bot API calls — `tg_get_me`, `tg_get_chat`, `tg_get_chat_administrators`, `tg_get_chat_member`, `tg_send_message`, `tg_get_updates`. Requires `BOT_TOKEN` set in environment. Custom zero-dependency Node.js server in `.claude/mcp-servers/telegram-bot-api.mjs`. |
 | `fetch` | General HTTP via `@modelcontextprotocol/server-fetch` — use to call the GitHub REST API, Upstash Redis REST API, or alerts.in.ua directly when debugging. |
+| `render` | Render's official hosted MCP server (`https://mcp.render.com/mcp`) — manage/inspect Render services, deploys, and logs. Requires `RENDER_API_KEY` in environment. Backs the `render-bot-quick-deploy` skill. |
+| `upstash` | Official `@upstash/mcp-server` — manage Upstash Redis databases (create/list/query), QStash, and Workflow at the account level. Requires `UPSTASH_EMAIL` + `UPSTASH_API_KEY` (Upstash Console → Account → API Keys) — distinct from the per-database `UPSTASH_REDIS_REST_URL`/`_TOKEN` the bot itself uses at runtime. |
+| `uptimerobot` | UptimeRobot's official hosted MCP server (`https://mcp.uptimerobot.com/mcp`) — manage monitors, alert contacts, maintenance windows. Requires `UPTIMEROBOT_API_KEY` (Main key, not read-only) in environment. |
 
 ### Telegram MCP usage examples
 
@@ -183,4 +186,4 @@ tg_get_chat_administrators chat_id="-1001234567890"
 tg_get_chat_member chat_id="-1001234567890" user_id=123456789
 ```
 
-Note: `BOT_TOKEN` must be set in your shell before starting Claude Code for the Telegram MCP to connect. The fetch MCP requires no credentials.
+Note: `BOT_TOKEN` must be set in your shell before starting Claude Code for the Telegram MCP to connect. The fetch MCP requires no credentials. `render`/`upstash`/`uptimerobot` similarly need their respective env vars (`RENDER_API_KEY`; `UPSTASH_EMAIL` + `UPSTASH_API_KEY`; `UPTIMEROBOT_API_KEY`) set in your shell before starting Claude Code — a server whose env var is missing at startup just won't connect, everything else keeps working. Restarting the session picks up newly-added `.mcp.json` entries; they don't hot-reload mid-session.

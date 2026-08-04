@@ -12,6 +12,26 @@ allowed-tools:
 
 # render-bot-quick-deploy
 
+## MCP servers vs. this skill's script
+
+This repo's `.mcp.json` also defines `render`, `upstash`, and `uptimerobot`
+MCP servers (see CLAUDE.md's MCP servers table) — official hosted/npm
+servers for each provider, needing `RENDER_API_KEY` /
+`UPSTASH_EMAIL`+`UPSTASH_API_KEY` / `UPTIMEROBOT_API_KEY` in the shell
+before Claude Code starts. Use those for one-off exploration — "what
+services do I already have," "what's this service's deploy status," "list
+my Upstash databases" — since they expose the provider's full tool surface
+with no script to maintain.
+
+Use `scripts/render_deploy.py` (this skill) for the actual multi-step new-bot
+deployment: it's the one place that enforces the dry-run-first / masked-
+secrets / explicit-confirmation flow this whole skill is built around, and
+chains three providers' calls together in the right order (Upstash DB before
+Render service, so the REST URL/token can go straight into `envVars`).
+Don't try to replicate that chained flow via ad hoc MCP tool calls — a
+half-finished chain (a database created but no service to attach it to) is
+exactly the kind of loose end this script exists to avoid.
+
 Stand up a new Telegram bot on Render's free tier in one pass: create the
 web service, provision it a dedicated Upstash Redis database, wire in its
 secrets, and register an UptimeRobot monitor so it doesn't sleep. The bot
