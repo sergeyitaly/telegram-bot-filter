@@ -85,10 +85,12 @@ runtime can't install (no apt access), so deploy via the included
 2. On Render: **New → Web Service** → connect the repo → environment:
    **Docker** (it will auto-detect the `Dockerfile`).
 3. Set environment variables in the Render dashboard — see `.env.example`
-   for the full list (`BOT_TOKEN` and `OWNER_IDS` are required, `CHAT_ADMINS`
-   is what actually lets the bot serve a chat at all — see below; the rest
-   are optional with sane defaults). Leave `PORT` unset — Render injects it
-   automatically and the app reads it from `$PORT`.
+   for the full list (`BOT_TOKEN` and `OWNER_IDS` are required; everything
+   else, including which chats the bot serves, is optional with sane
+   defaults — a chat either needs a `CHAT_ADMINS` entry or self-activates
+   when a verified admin adds the bot, see
+   [Multi-group deployments](#multi-group-deployments) below). Leave `PORT`
+   unset — Render injects it automatically and the app reads it from `$PORT`.
 4. Deploy. The service binds an HTTP server on `$PORT` (`bot/health.py`)
    purely so Render sees an open port and so an uptime pinger has something
    to hit — the bot itself talks to Telegram via long polling, not webhooks.
@@ -155,14 +157,17 @@ without their admins seeing each other's activity, and without you having to
 hand-configure every group yourself:
 
 - Each chat's admins can run `/alarm_on`, `/alarm_off`, `/status`,
-  `/addkeyword`, and `/unmute` **only in their own chat**, and only get
-  DMs about their own chat's alarm/violation activity — never another
-  group's.
+  `/addkeyword`, `/unmute`, `/activate`, and `/addadmin` **only in their own
+  chat**, and only get DMs about their own chat's alarm/violation activity
+  — never another group's.
 - **`OWNER_IDS`** (you, the deployer) are admin in every chat and are the
   only ones told about bot-wide security events, like someone who isn't an
   admin trying to add the bot somewhere.
-- `/allowbot` is owner-only, since it exempts a bot account across every
-  chat this deployment serves — not just the one the command was run in.
+- `/allowbot` and `/listkeywords` are owner-only: `/allowbot` exempts a bot
+  account across every chat this deployment serves, not just the one the
+  command was run in, and `/listkeywords` exposes the exact filter
+  wordlist — a much wider trust boundary than any one chat's admins should
+  have (see [Tuning the filter](#tuning-the-filter)).
 - The keyword list (`/addkeyword`, `bot/keywords.py`) is shared across all
   chats, not per-group — any chat's admin extending it affects filtering
   everywhere.
