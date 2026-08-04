@@ -9,12 +9,15 @@ restart); the violation *audit log* (log_violation/get_violation_log) is
 durable and Redis-backed on purpose — it exists specifically so it survives
 for a chat admin to review later.
 """
+import inspect
 import time
 from dataclasses import dataclass
 
 from telegram import ChatPermissions
 
 from bot import store
+
+_CHAT_PERMISSIONS_KEYS = set(inspect.signature(ChatPermissions).parameters.keys())
 
 _CHAT_STATES_KEY = "chat_states"
 _CLAIMED_ADMINS_KEY = "claimed_admins"
@@ -47,7 +50,7 @@ class ChatState:
         return cls(
             alarm_active=data.get("alarm_active", False),
             auto_armed=data.get("auto_armed", False),
-            saved_permissions=ChatPermissions(**perms) if perms else None,
+            saved_permissions=ChatPermissions(**{k: v for k, v in perms.items() if k in _CHAT_PERMISSIONS_KEYS}) if perms else None,
             alarm_ended_at=data.get("alarm_ended_at"),
         )
 
