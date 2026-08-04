@@ -6,6 +6,7 @@ activate_alarm for the fix (saved_permissions is only captured while None).
 """
 import pytest
 from telegram import ChatPermissions
+from telegram.error import BadRequest
 
 from bot import handlers, state
 
@@ -25,11 +26,15 @@ class FakeBot:
     def __init__(self, initial_permissions: ChatPermissions):
         self._permissions = initial_permissions
         self.set_calls: list[ChatPermissions] = []
+        self.fail_next_set = False
 
     async def get_chat(self, chat_id):
         return FakeChat(self._permissions)
 
     async def set_chat_permissions(self, chat_id, permissions, use_independent_chat_permissions=True):
+        if self.fail_next_set:
+            self.fail_next_set = False
+            raise BadRequest("Not enough rights to restrict/unrestrict chat member")
         self.set_calls.append(permissions)
         self._permissions = permissions
 
@@ -113,3 +118,28 @@ async def test_saved_permissions_not_overwritten_by_redundant_activate():
     captured_after_second = state.get(CHAT_ID).saved_permissions.to_dict()
 
     assert captured_after_second == captured_after_first == initial.to_dict()
+
+
+async def test_failed_restore_keeps_saved_permissions_for_retry():
+    initial = _open_permissions()
+    bot = FakeBot(initial)
+    ctx = FakeContext(bot)
+
+    await handlers.activate_alarm(ctx, CHAT_ID)
+    assert state.get(CHAT_ID).saved_permissions.to_dict() == initial.to_dict()
+
+    # Restore API call fails (e.g. bot temporarily lost admin rights).
+    bot.fail_next_set = True
+    await handlers.deactivate_alarm(ctx, CHAT_ID)
+
+    # The chat is still locked (the failed call never applied), and the
+    # original must still be saved -- clearing it here would strand the
+    # chat locked with nothing left to restore from.
+    assert bot._permissions.can_send_photos is False
+    assert state.get(CHAT_ID).saved_permissions is not None
+    assert state.get(CHAT_ID).saved_permissions.to_dict() == initial.to_dict()
+
+    # Retrying (once the underlying issue is fixed) succeeds and restores.
+    await handlers.deactivate_alarm(ctx, CHAT_ID)
+    assert bot._permissions.to_dict() == initial.to_dict()
+    assert state.get(CHAT_ID).saved_permissions is None

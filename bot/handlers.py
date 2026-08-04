@@ -221,7 +221,13 @@ async def deactivate_alarm(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> 
         except BadRequest as exc:
             log.warning("could not restore permissions in chat %s: %s", chat_id, exc)
             restore_note = f"⚠️ Alarm OFF у чаті {chat_id}, але не вдалось відновити права чату ({exc.message}) — перевірте вручну."
-        await state.set_saved_permissions(chat_id, None)
+        else:
+            # Only clear the saved original once it's actually been restored.
+            # Clearing it unconditionally (even on failure) loses the true
+            # original the same way the activate_alarm bug did: the state
+            # would show no lockdown while the live chat is still locked, and
+            # nothing would be left to retry the restore with.
+            await state.set_saved_permissions(chat_id, None)
 
     await _announce(context, chat_id, "✅ Тривога: відбій.")
     if restore_note:
