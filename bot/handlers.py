@@ -1,4 +1,5 @@
 """Telegram update handlers."""
+import asyncio
 import logging
 import os
 import tempfile
@@ -324,7 +325,7 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         photo = msg.photo[-1]
         tg_file = await photo.get_file()
         await tg_file.download_to_drive(src)
-        media.blur_photo(src, dst)
+        await asyncio.to_thread(media.blur_photo, src, dst)
 
         try:
             await msg.delete()
@@ -369,7 +370,7 @@ async def on_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         dst = os.path.join(tmp, "out.mp4")
         tg_file = await video.get_file()
         await tg_file.download_to_drive(src)
-        blurred_ok = media.blur_video(src, dst)
+        blurred_ok = await media.blur_video(src, dst)
 
         try:
             await msg.delete()
