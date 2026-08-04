@@ -62,6 +62,12 @@ VIDEO_BLUR_STRENGTH = int(os.environ.get("VIDEO_BLUR_STRENGTH", "30"))
 VIOLATION_THRESHOLD = int(os.environ.get("VIOLATION_THRESHOLD", "3"))
 VIOLATION_WINDOW_SECONDS = int(os.environ.get("VIOLATION_WINDOW_SECONDS", "600"))
 
+# How long after alarm mode turns off (відбій) strike-result keyword/caption
+# text filtering keeps applying, before winding down to no filtering at all.
+# Coordinates are always blocked regardless of this window — that's a direct
+# location leak, not a timing-sensitive one. Default 2 hours.
+POST_ALARM_GRACE_SECONDS = int(os.environ.get("POST_ALARM_GRACE_SECONDS", "7200"))
+
 # Optional: auto-arm alarm mode from real air-raid status via alerts.in.ua
 # (https://devs.alerts.in.ua/) instead of relying only on manual /alarm_on.
 # Leave ALERTS_API_TOKEN empty to disable this entirely.

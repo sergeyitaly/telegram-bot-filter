@@ -5,11 +5,16 @@ posted during/after drone or missile strikes that could help an attacker
 confirm a hit or correct aim for a follow-up strike:
 
 - **Text**: deletes messages containing strike-result keywords (приліт,
-  влучання, наслідки удару, etc.), shared coordinates, or — while alarm mode
-  is on — any address/location chatter.
+  влучання, наслідки удару, etc.) or address/location chatter, while alarm
+  mode is active **or** within `POST_ALARM_GRACE_SECONDS` after it ends
+  (default 2h) — so a chat isn't permanently barred from ever discussing a
+  past strike once the sensitive window has passed. Shared coordinates are
+  deleted unconditionally, any time — that's a direct location leak, not a
+  timing-sensitive one.
 - **Photos/videos**: while alarm mode is on, every photo/video in the chat is
-  deleted and reposted **blurred** with a warning. Outside alarm mode, only
-  media whose caption matches strike-result keywords is blurred.
+  deleted and reposted **blurred** with a warning. Outside an active alarm
+  (including during the grace window), only media whose caption matches
+  strike-result keywords or coordinates is blurred.
 - **Live location**: always deleted immediately.
 - **Unauthorized bots**: any bot account that joins without being whitelisted
   via `/allowbot` is kicked immediately — another bot in the chat can scrape
@@ -196,5 +201,9 @@ restarts without re-claiming.
   to avoid timing out on Render's free CPU allocation.
 - `VIOLATION_THRESHOLD` / `VIOLATION_WINDOW_SECONDS` control repeat-offender
   auto-muting sensitivity (default: mute after 3 hits in 10 minutes).
+- `POST_ALARM_GRACE_SECONDS` (default 7200 = 2h) controls how long keyword
+  filtering keeps applying after alarm mode turns off. Set to `0` for
+  filtering to stop the instant alarm mode ends; coordinates are unaffected
+  either way — always blocked.
 - `TRUSTED_BOT_IDS` (or runtime `/allowbot <bot_id>`) whitelists bot accounts
   that should be allowed to join without being auto-kicked.

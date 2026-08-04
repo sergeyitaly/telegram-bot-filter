@@ -16,6 +16,9 @@ class ChatState:
     # Chat permissions to restore on /alarm_off, captured just before we
     # lock media down for /alarm_on.
     saved_permissions: object = None
+    # time.monotonic() of the last alarm_active True->False transition, for
+    # the post-alarm keyword-filtering grace period. None = never armed yet.
+    alarm_ended_at: float | None = None
 
 
 _chats: dict[int, ChatState] = {}
@@ -69,8 +72,15 @@ def get(chat_id: int) -> ChatState:
 
 def set_alarm(chat_id: int, active: bool, auto: bool = False) -> None:
     st = get(chat_id)
+    if st.alarm_active and not active:
+        st.alarm_ended_at = time.monotonic()
     st.alarm_active = active
     st.auto_armed = auto if active else False
+
+
+def in_post_alarm_grace(chat_id: int, grace_seconds: int) -> bool:
+    ended_at = get(chat_id).alarm_ended_at
+    return ended_at is not None and time.monotonic() - ended_at < grace_seconds
 
 
 def register_chat(chat_id: int) -> None:

@@ -20,6 +20,7 @@ from bot.config import (
     INVITE_TOKENS,
     MAX_VIDEO_MB,
     OWNER_IDS,
+    POST_ALARM_GRACE_SECONDS,
     TRUSTED_BOT_IDS,
     VIOLATION_THRESHOLD,
     VIOLATION_WINDOW_SECONDS,
@@ -58,6 +59,14 @@ def _is_claim_command(update: Update) -> bool:
     if not msg or not msg.text:
         return False
     return msg.text.split()[0].split("@")[0].lower() == "/claim"
+
+
+def _strict_mode(chat_id: int, st) -> bool:
+    """Alarm active, or still within the wind-down window after it ended —
+    keyword filtering (not coordinates, those are unconditional) only
+    applies during this window, so a chat isn't permanently barred from
+    ever discussing a past strike."""
+    return st.alarm_active or state.in_post_alarm_grace(chat_id, POST_ALARM_GRACE_SECONDS)
 
 
 async def guard_allowed_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -429,8 +438,9 @@ async def on_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.effective_message
-    st = state.get(update.effective_chat.id)
-    verdict = classify.classify_text(msg.text, st.alarm_active)
+    chat_id = update.effective_chat.id
+    st = state.get(chat_id)
+    verdict = classify.classify_text(msg.text, _strict_mode(chat_id, st))
     if not verdict.flagged:
         return
     try:
@@ -463,8 +473,9 @@ async def on_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.effective_message
-    st = state.get(update.effective_chat.id)
-    verdict = classify.classify_media(msg.caption or "", st.alarm_active)
+    chat_id = update.effective_chat.id
+    st = state.get(chat_id)
+    verdict = classify.classify_media(msg.caption or "", st.alarm_active, _strict_mode(chat_id, st))
     if not verdict.flagged:
         return
 
@@ -498,8 +509,9 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def on_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.effective_message
     video = msg.video or msg.video_note
-    st = state.get(update.effective_chat.id)
-    verdict = classify.classify_media(msg.caption or "", st.alarm_active)
+    chat_id = update.effective_chat.id
+    st = state.get(chat_id)
+    verdict = classify.classify_media(msg.caption or "", st.alarm_active, _strict_mode(chat_id, st))
     if not verdict.flagged:
         return
 
