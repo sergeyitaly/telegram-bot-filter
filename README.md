@@ -196,6 +196,21 @@ admin runs `/activate` once in their group to re-establish it (same
 verified-admin check, instant). Move a group into `CHAT_ADMINS` instead if
 it needs to survive restarts with zero action from anyone.
 
+## Reporting the bot's own downtime
+
+Set `UPTIMEROBOT_API_KEY` (a **Read-Only** key — My Settings → API Settings
+on UptimeRobot) and `UPTIMEROBOT_MONITOR_ID` (the numeric id in the
+monitor's dashboard URL, e.g. `.../monitors/803663665`) to DM owners
+whenever UptimeRobot's own logs show a new completed down period for this
+bot's `/health` monitor.
+
+This is necessarily retrospective — a process that isn't running can't run
+code to say so — so it's a "you were down from X to Y" message once the
+bot is back up and the next `UPTIMEROBOT_POLL_SECONDS` tick runs (default
+10 min), never a live "still down" alert. It complements, rather than
+replaces, actually keeping UptimeRobot pinging `/health` to prevent that
+downtime in the first place (see "Keeping it awake" above).
+
 ## Tuning the filter
 
 - Add keywords at runtime (admin only): `/addkeyword слово` (strike-result

@@ -9,8 +9,17 @@ from telegram.ext import (
     filters,
 )
 
-from bot import air_alert, handlers, health
-from bot.config import ALERTS_API_TOKEN, ALERTS_OBLAST_UIDS, ALERTS_POLL_SECONDS, BOT_TOKEN, PORT
+from bot import air_alert, handlers, health, uptime_check
+from bot.config import (
+    ALERTS_API_TOKEN,
+    ALERTS_OBLAST_UIDS,
+    ALERTS_POLL_SECONDS,
+    BOT_TOKEN,
+    PORT,
+    UPTIMEROBOT_API_KEY,
+    UPTIMEROBOT_MONITOR_ID,
+    UPTIMEROBOT_POLL_SECONDS,
+)
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -48,6 +57,12 @@ def build_application() -> Application:
         log.info("alerts.in.ua auto-alarm enabled for uids %s", sorted(ALERTS_OBLAST_UIDS))
     else:
         log.info("alerts.in.ua auto-alarm disabled (ALERTS_API_TOKEN/ALERTS_OBLAST_UID not set)")
+
+    if UPTIMEROBOT_API_KEY and UPTIMEROBOT_MONITOR_ID:
+        app.job_queue.run_repeating(uptime_check.poll, interval=UPTIMEROBOT_POLL_SECONDS, first=15)
+        log.info("uptimerobot downtime reporting enabled for monitor %s", UPTIMEROBOT_MONITOR_ID)
+    else:
+        log.info("uptimerobot downtime reporting disabled (UPTIMEROBOT_API_KEY/UPTIMEROBOT_MONITOR_ID not set)")
 
     return app
 

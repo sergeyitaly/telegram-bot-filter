@@ -75,6 +75,16 @@ ALERTS_API_TOKEN = os.environ.get("ALERTS_API_TOKEN", "")
 ALERTS_OBLAST_UIDS = {u.strip() for u in os.environ.get("ALERTS_OBLAST_UID", "").split(",") if u.strip()}
 ALERTS_POLL_SECONDS = int(os.environ.get("ALERTS_POLL_SECONDS", "60"))
 
+# Optional: retrospectively DM owners about downtime UptimeRobot recorded for
+# this bot's own /health monitor. This can only ever be retrospective — code
+# that isn't running can't report that it isn't running — so it's checked
+# periodically while the bot IS up, surfacing "you were down from X to Y"
+# after the fact (e.g. right after a Render free-tier cold start). Leave
+# UPTIMEROBOT_API_KEY empty to disable.
+UPTIMEROBOT_API_KEY = os.environ.get("UPTIMEROBOT_API_KEY", "")
+UPTIMEROBOT_MONITOR_ID = os.environ.get("UPTIMEROBOT_MONITOR_ID", "")
+UPTIMEROBOT_POLL_SECONDS = int(os.environ.get("UPTIMEROBOT_POLL_SECONDS", "600"))
+
 WARNING_TEXT = (
     "⚠️ Повідомлення видалено. Публікація наслідків ударів (фото/відео/адреси/координати) "
     "під час чи одразу після атаки допомагає ворогу коригувати наведення. "

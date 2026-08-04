@@ -109,7 +109,7 @@ async def _announce(context: ContextTypes.DEFAULT_TYPE, chat_id: int, text: str)
         log.exception("failed to announce in chat %s", chat_id)
 
 
-async def _notify_owners(context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
+async def notify_owners(context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
     """For bot-wide events that aren't scoped to any one chat (e.g. someone
     adding this shared bot to an unauthorized group) — owners only, since
     per-chat admins have no stake in chats other than their own."""
@@ -286,7 +286,7 @@ async def _register_chat_admin(context: ContextTypes.DEFAULT_TYPE, chat, user) -
         context, chat.id,
         "✅ Bot activated for this group. Alarm mode and content filtering are now live."
     )
-    await _notify_owners(
+    await notify_owners(
         context,
         f"✅ Chat {chat.id} ({chat.title}) auto-activated — added by verified admin "
         f"@{user.username or '?'} (id {user.id}).",
@@ -346,7 +346,7 @@ async def on_my_chat_member_update(update: Update, context: ContextTypes.DEFAULT
         await context.bot.leave_chat(chat_id)
     except Exception:
         log.exception("failed to leave unauthorized chat %s", chat_id)
-    await _notify_owners(
+    await notify_owners(
         context,
         "🔒 Bot was added by someone who isn't an admin of that chat — left automatically.\n"
         f"Chat: {cmu.chat.title or cmu.chat.type} (id {chat_id})\n"
