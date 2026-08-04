@@ -122,6 +122,21 @@ async def notify_owners(context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
             log.warning("could not DM owner %s (they may need to /start the bot first)", owner_id)
 
 
+async def notify_all_admins(context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
+    """DM owners plus every chat's admins — for operational issues (Redis
+    down, the bot falling behind on processing) that affect every group this
+    deployment serves at once, unlike _notify_admins which scopes to one
+    chat's own admins. One user gets one DM even if they admin several chats."""
+    all_ids: set[int] = set(OWNER_IDS)
+    for chat_id in set(CHAT_ADMINS.keys()) | state.all_claimed_chat_ids():
+        all_ids |= _admins_for(chat_id)
+    for admin_id in all_ids:
+        try:
+            await context.bot.send_message(chat_id=admin_id, text=text)
+        except Exception:
+            log.warning("could not DM admin %s (they may need to /start the bot first)", admin_id)
+
+
 async def _delete_silently(msg) -> None:
     try:
         await msg.delete()

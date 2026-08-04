@@ -26,6 +26,36 @@ ENABLED = bool(UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN)
 
 _HEADERS = {"Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}"}
 
+# Tracked so bot/health_monitor.py can DM admins when Redis is unreachable or
+# over quota (free-tier daily request/size limits) instead of every write
+# silently degrading to in-memory-only with nobody noticing.
+_UNHEALTHY_THRESHOLD = 3
+_consecutive_failures = 0
+_last_failure_reason = ""
+
+
+def is_healthy() -> bool:
+    return _consecutive_failures < _UNHEALTHY_THRESHOLD
+
+
+def health_status() -> dict:
+    return {
+        "consecutive_failures": _consecutive_failures,
+        "last_failure_reason": _last_failure_reason,
+    }
+
+
+def _record_success() -> None:
+    global _consecutive_failures, _last_failure_reason
+    _consecutive_failures = 0
+    _last_failure_reason = ""
+
+
+def _record_failure(reason: str) -> None:
+    global _consecutive_failures, _last_failure_reason
+    _consecutive_failures += 1
+    _last_failure_reason = reason[:200]
+
 
 async def get_json(key: str, default):
     if not ENABLED:
@@ -35,9 +65,11 @@ async def get_json(key: str, default):
             resp = await client.get(f"{UPSTASH_REDIS_REST_URL}/get/{key}", headers=_HEADERS)
             resp.raise_for_status()
             result = resp.json().get("result")
-    except Exception:
+    except Exception as exc:
         log.exception("redis get failed for key %s — using default", key)
+        _record_failure(str(exc))
         return default
+    _record_success()
 
     if result is None:
         return default
@@ -59,5 +91,8 @@ async def set_json(key: str, value) -> None:
                 content=json.dumps(value),
             )
             resp.raise_for_status()
-    except Exception:
+    except Exception as exc:
         log.exception("redis set failed for key %s — change is in-memory only", key)
+        _record_failure(str(exc))
+        return
+    _record_success()

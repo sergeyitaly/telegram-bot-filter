@@ -132,6 +132,7 @@ ruff check . --select E,W,F --ignore E501
 | `REPORT_VIOLATION_THRESHOLD` | No | `10` | All-time count before admin DM |
 | `AUTO_KICK_ON_REPORT_THRESHOLD` | No | `false` | Auto-remove on threshold (vs just notify) |
 | `POST_ALARM_GRACE_SECONDS` | No | `7200` | Keyword filter duration after alarm-off |
+| `HEALTH_MONITOR_POLL_SECONDS` | No | `120` | Redis/backlog self-check interval; DMs admins if unhealthy |
 | `PORT` | No | `8080` | HTTP health server port (Render injects this) |
 
 ---

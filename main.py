@@ -9,12 +9,13 @@ from telegram.ext import (
     filters,
 )
 
-from bot import air_alert, handlers, health, keywords, state, store, uptime_check
+from bot import air_alert, handlers, health, health_monitor, keywords, state, store, uptime_check
 from bot.config import (
     ALERTS_API_TOKEN,
     ALERTS_OBLAST_UIDS,
     ALERTS_POLL_SECONDS,
     BOT_TOKEN,
+    HEALTH_MONITOR_POLL_SECONDS,
     PORT,
     UPTIMEROBOT_API_KEY,
     UPTIMEROBOT_MONITOR_ID,
@@ -104,6 +105,9 @@ def build_application() -> Application:
         log.info("uptimerobot downtime reporting enabled for monitor %s", UPTIMEROBOT_MONITOR_ID)
     else:
         log.info("uptimerobot downtime reporting disabled (UPTIMEROBOT_API_KEY/UPTIMEROBOT_MONITOR_ID not set)")
+
+    app.job_queue.run_repeating(health_monitor.poll, interval=HEALTH_MONITOR_POLL_SECONDS, first=30)
+    log.info("health monitor enabled (every %ss): redis + processing backlog", HEALTH_MONITOR_POLL_SECONDS)
 
     return app
 

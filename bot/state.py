@@ -83,6 +83,13 @@ _media_rate: dict[tuple[int, int], list[float]] = {}
 _RATE_MEDIA_MAX = 5        # max expensive media ops per user per window
 _RATE_MEDIA_WINDOW = 60.0  # seconds
 
+# Every trip of the per-user limit above, across every user/chat this
+# deployment serves, timestamped — lets bot/health_monitor.py tell "one user
+# flooding" (handled fine, no alert needed) apart from "many users tripping
+# the limit at once" (real overload, or a real mass-strike moment where
+# everyone's posting simultaneously — either way, admins should know).
+_global_rate_trips: collections.deque = collections.deque()
+
 # Chats self-activated at runtime (auto-registered when a verified admin
 # adds the bot, or via /addadmin), plus their admins. Merged with the
 # env-configured CHAT_ADMINS at lookup time.
@@ -211,7 +218,19 @@ def check_media_rate(chat_id: int, user_id: int) -> bool:
     times = [t for t in times if now - t < _RATE_MEDIA_WINDOW]
     times.append(now)
     _media_rate[key] = times
-    return len(times) <= _RATE_MEDIA_MAX
+    ok = len(times) <= _RATE_MEDIA_MAX
+    if not ok:
+        _global_rate_trips.append(now)
+    return ok
+
+
+def count_recent_rate_limit_trips(window_seconds: float) -> int:
+    """How many times ANY user tripped the media rate limit in the trailing
+    window, across every chat — an aggregate overload signal."""
+    now = time.monotonic()
+    while _global_rate_trips and now - _global_rate_trips[0] > window_seconds:
+        _global_rate_trips.popleft()
+    return len(_global_rate_trips)
 
 
 def record_violation(chat_id: int, user_id: int, window_seconds: int) -> int:

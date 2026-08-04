@@ -102,6 +102,11 @@ UPTIMEROBOT_API_KEY = os.environ.get("UPTIMEROBOT_API_KEY", "")
 UPTIMEROBOT_MONITOR_ID = os.environ.get("UPTIMEROBOT_MONITOR_ID", "")
 UPTIMEROBOT_POLL_SECONDS = int(os.environ.get("UPTIMEROBOT_POLL_SECONDS", "600"))
 
+# How often to self-check Redis health and processing backlog and, if either
+# looks unhealthy, DM every chat's admins (see bot/health_monitor.py). Always
+# on — reads only the bot's own internal state, no external API key needed.
+HEALTH_MONITOR_POLL_SECONDS = int(os.environ.get("HEALTH_MONITOR_POLL_SECONDS", "120"))
+
 # Optional: persist claimed admins, custom keywords, and alarm/lockdown
 # state across restarts via Upstash Redis's REST API (no TCP client needed,
 # fits the same request/response style as the other pollers). Free tier at
