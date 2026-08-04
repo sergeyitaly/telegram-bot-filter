@@ -60,6 +60,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("violations", handlers.cmd_violations))
     app.add_handler(CommandHandler("activate", handlers.cmd_activate))
     app.add_handler(CommandHandler("addadmin", handlers.cmd_addadmin))
+    app.add_handler(CommandHandler("removeadmin", handlers.cmd_removeadmin))
 
     app.add_handler(ChatMemberHandler(handlers.on_chat_member_update, ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(ChatMemberHandler(handlers.on_my_chat_member_update, ChatMemberHandler.MY_CHAT_MEMBER))
@@ -69,6 +70,14 @@ def build_application() -> Application:
     app.add_handler(MessageHandler(filters.VIDEO | filters.VIDEO_NOTE, handlers.on_video))
     app.add_handler(MessageHandler(filters.Document.ALL, handlers.on_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.on_text))
+
+    # Edited messages: same classification pipeline — without these, editing a
+    # flagged message after posting is a trivial bypass for all text/media filters.
+    _edited = filters.UpdateType.EDITED_MESSAGE
+    app.add_handler(MessageHandler(_edited & (filters.TEXT & ~filters.COMMAND), handlers.on_text))
+    app.add_handler(MessageHandler(_edited & filters.PHOTO, handlers.on_photo))
+    app.add_handler(MessageHandler(_edited & (filters.VIDEO | filters.VIDEO_NOTE), handlers.on_video))
+    app.add_handler(MessageHandler(_edited & filters.Document.ALL, handlers.on_document))
 
     if ALERTS_API_TOKEN and ALERTS_OBLAST_UIDS:
         app.job_queue.run_repeating(air_alert.poll, interval=ALERTS_POLL_SECONDS, first=10)

@@ -13,20 +13,35 @@ import re
 from bot import store
 
 STRIKE_TERMS = [
-    # Ukrainian
-    r"приліт", r"прильот", r"влучанн", r"влучив", r"влучила", r"влучили",
+    # Ukrainian — direct terminology
+    r"приліт", r"прильот", r"прилетіло", r"прилетів",
+    r"влучанн", r"влучив", r"влучила", r"влучили",
     r"наслідки удару", r"наслідки атаки", r"наслідки обстрілу",
     r"уламк", r"збил[иао]", r"падінн\w* уламків", r"детонац",
-    r"руйнуванн", r"пожежа після удару", r"вибух", r"вибухи", r"вибухнул",
-    r"дим над", r"горить будинок", r"приліт[іу]в", r"поранен", r"загибл", r"жертв",
-    # Slang/euphemisms specifically used to talk around strike-result
-    # moderation — "бавовна" ("cotton") is the dominant one on Ukrainian
-    # Telegram, precisely because plain wording gets filtered.
+    r"руйнуванн", r"пошкоджен\w* будин", r"пожежа після удару",
+    r"вибух", r"вибухи", r"вибухнул",
+    r"дим над", r"стовп диму", r"задимленн", r"горить будинок",
+    r"приліт[іу]в", r"поранен", r"загибл", r"жертв",
+    r"знищен\w* об'єкт", r"ракетн\w* удар", r"балістич\w* ракет",
+    r"крилат\w* ракет",
+    # Ukrainian — colloquial/euphemisms used specifically to evade filters
     r"бавовн", r"хлопок", r"хлопнул",
-    # Russian
-    r"прилет", r"попадани", r"последстви\w* удара", r"последстви\w* атаки",
+    r"жахнуло", r"бабахнуло", r"ахнуло", r"гримнуло", r"рвонуло",
+    r"гепнуло", r"накрило", r"шандарахнуло",
+    r"прибули гості", r"навідались гості",
+    r"пташк\w* прилет", r"птах\w* прилет",
+    r"мопед\w* прилет", r"мопед\w* впав",
+    # Drone/UAV terms used to report strike locations
+    r"шахед\w*", r"герань\w*", r"бпла", r"безпілотник\w*",
+    r"дрон\w* впав", r"дрон\w* влучив", r"дрон\w* збил",
+    # Russian — direct terminology
+    r"прилет", r"прилетело", r"попадани",
+    r"последстви\w* удара", r"последстви\w* атаки",
     r"обломк", r"взрыв", r"разрушени", r"пожар после удара", r"сбил[иао]",
     r"пострадавш", r"погибш", r"ранен",
+    # Russian — colloquial/euphemisms
+    r"бахнуло", r"шарахнуло", r"накрыло", r"прилетело",
+    r"шахед\w*", r"герань\w*", r"бпла",
 ]
 
 LOCATION_TERMS = [
@@ -36,7 +51,9 @@ LOCATION_TERMS = [
 ]
 
 # lat,long shared as plain text (native Telegram location pins are handled separately).
-COORDINATE_RE = re.compile(r"-?\d{1,3}[.,]\d{3,6}\s*,\s*-?\d{1,3}[.,]\d{3,6}")
+# {2,6} decimal digits: catches common 2-decimal precision (e.g. 50.45, 30.52) that
+# the previous {3,6} minimum silently missed.
+COORDINATE_RE = re.compile(r"-?\d{1,3}[.,]\d{2,6}\s*,\s*-?\d{1,3}[.,]\d{2,6}")
 
 _STRIKE_RE = re.compile("|".join(STRIKE_TERMS), re.IGNORECASE)
 _LOCATION_RE = re.compile("|".join(LOCATION_TERMS), re.IGNORECASE)

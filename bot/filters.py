@@ -1,7 +1,47 @@
 """Message classification: decide whether text/media should be blocked."""
+import logging
+import unicodedata
 from dataclasses import dataclass
 
 from bot import keywords
+
+log = logging.getLogger(__name__)
+
+# Map visually identical Latin characters to their Cyrillic equivalents so
+# homoglyph substitution (e.g. Latin 'a' instead of Cyrillic 'а') cannot
+# bypass Cyrillic keyword patterns.
+_LATIN_TO_CYRILLIC = str.maketrans(
+    "aABCcEeHiIKMOoPpTXxy",
+    "аАВСсЕеНіІКМОоРрТХху",
+)
+
+# Zero-width and soft-hyphen characters commonly injected to break regex matches.
+_ZERO_WIDTH = {"\u200b", "\u200c", "\u200d", "\u2060", "\ufeff", "\u00ad"}
+
+
+def _normalize(text: str) -> str:
+    """NFKC-normalize, strip zero-width chars, and map Latin homoglyphs to
+    Cyrillic so bypass attempts using lookalike letters or invisible spacers
+    are caught by the same patterns as regular text."""
+    text = unicodedata.normalize("NFKC", text)
+    text = "".join(ch for ch in text if ch not in _ZERO_WIDTH)
+    text = text.translate(_LATIN_TO_CYRILLIC)
+    return text
+
+
+def ocr_image(path: str) -> str:
+    """Extract text from an image via OCR. Returns empty string if
+    pytesseract is not installed — graceful no-op in deployments without it."""
+    try:
+        import pytesseract
+        from PIL import Image
+    except ImportError:
+        return ""
+    try:
+        return pytesseract.image_to_string(Image.open(path), lang="ukr+rus+eng")
+    except Exception as exc:
+        log.debug("OCR failed for %s: %s", path, exc)
+        return ""
 
 
 @dataclass
@@ -18,6 +58,8 @@ def classify_text(text: str, strict: bool) -> Verdict:
     permanently barred from ever mentioning a past strike."""
     if not text:
         return Verdict(False)
+
+    text = _normalize(text)
 
     if keywords.has_coordinates(text):
         return Verdict(True, "coordinates shared")
@@ -38,6 +80,9 @@ def classify_media(caption: str, alarm_active: bool, strict: bool) -> Verdict:
     matters, same strict-window rule as text."""
     if alarm_active:
         return Verdict(True, "media posted during active alarm")
+
+    if caption:
+        caption = _normalize(caption)
 
     if caption and keywords.has_coordinates(caption):
         return Verdict(True, "coordinates in caption")

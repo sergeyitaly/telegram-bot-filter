@@ -219,6 +219,33 @@ async def deactivate_alarm(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> 
         await _notify_admins(context, chat_id, restore_note)
 
 
+async def reapply_lockdown(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
+    """Re-enforce media lockdown permissions for a chat that is currently in
+    alarm mode. Called each air-alert poll tick to undo any permission changes
+    a native Telegram admin may have silently applied over the bot's lockdown."""
+    st = state.get(chat_id)
+    if not st.alarm_active:
+        return
+    base = st.saved_permissions
+    try:
+        await context.bot.set_chat_permissions(
+            chat_id,
+            ChatPermissions(
+                can_send_messages=base.can_send_messages if base else True,
+                can_send_polls=base.can_send_polls if base else False,
+                can_add_web_page_previews=base.can_add_web_page_previews if base else False,
+                can_change_info=base.can_change_info if base else False,
+                can_invite_users=base.can_invite_users if base else False,
+                can_pin_messages=base.can_pin_messages if base else False,
+                can_manage_topics=base.can_manage_topics if base else False,
+                **_LOCKDOWN_PERMS,
+            ),
+            use_independent_chat_permissions=True,
+        )
+    except Exception:
+        log.debug("could not re-apply lockdown in chat %s", chat_id)
+
+
 async def cmd_alarm_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(update.effective_chat.id, update.effective_user.id):
         return
@@ -417,6 +444,23 @@ async def cmd_addadmin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     await state.add_chat_admin(chat_id, int(context.args[0]))
     await update.message.reply_text(f"User {context.args[0]} can now run admin commands in this chat.")
+
+
+async def cmd_removeadmin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Remove a previously-added claimed admin. Global owners can only be
+    revoked by other owners, not by per-chat admins."""
+    chat_id = update.effective_chat.id
+    if not _is_admin(chat_id, update.effective_user.id):
+        return
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text("Usage: /removeadmin <user_id>")
+        return
+    target_id = int(context.args[0])
+    if target_id in OWNER_IDS and update.effective_user.id not in OWNER_IDS:
+        await update.message.reply_text("Global owners can only be removed by other owners.")
+        return
+    await state.remove_chat_admin(chat_id, target_id)
+    await update.message.reply_text(f"Admin {target_id} removed from this chat.")
 
 
 async def on_my_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -618,19 +662,31 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.effective_message
     chat_id = update.effective_chat.id
     st = state.get(chat_id)
-    verdict = classify.classify_media(msg.caption or "", st.alarm_active, _strict_mode(chat_id, st))
-    if not verdict.flagged:
+    strict = _strict_mode(chat_id, st)
+    verdict = classify.classify_media(msg.caption or "", st.alarm_active, strict)
+
+    # Not flagged by caption/alarm and not in strict mode — nothing to do.
+    if not verdict.flagged and not strict:
         return
 
-    await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_PHOTO)
     with tempfile.TemporaryDirectory() as tmp:
         src = os.path.join(tmp, "in.jpg")
         dst = os.path.join(tmp, "out.jpg")
-        photo = msg.photo[-1]
-        tg_file = await photo.get_file()
+        tg_file = await msg.photo[-1].get_file()
         await tg_file.download_to_drive(src)
+
+        # OCR: check for screenshotted text only when caption didn't already flag it.
+        if not verdict.flagged:
+            ocr_text = classify.ocr_image(src)
+            if ocr_text:
+                verdict = classify.classify_text(ocr_text, strict)
+
+        if not verdict.flagged:
+            return
+
         await asyncio.to_thread(media.blur_photo, src, dst)
 
+        # Delete BEFORE repost so a crash after blur never leaves the original visible.
         try:
             await msg.delete()
         except Exception:
@@ -638,13 +694,13 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
 
         await context.bot.send_photo(
-            chat_id=update.effective_chat.id,
+            chat_id=chat_id,
             photo=open(dst, "rb"),
             caption=f"🔒 Фото заблюрено ({verdict.reason}).\n{WARNING_TEXT}",
         )
     log.info(
         "blurred photo in chat %s after %.2fs exposure: %s",
-        update.effective_chat.id, _exposure_seconds(msg), verdict.reason,
+        chat_id, _exposure_seconds(msg), verdict.reason,
     )
     await _track_violation(update, context, verdict.reason, msg.caption or "[photo, no caption]")
 
@@ -691,17 +747,18 @@ async def _blur_flagged_document(
         tg_file = await doc.get_file()
         await tg_file.download_to_drive(src)
 
-        if kind == "photo":
-            await asyncio.to_thread(media.blur_photo, src, dst)
-            blurred_ok = True
-        else:
-            blurred_ok = await media.blur_video(src, dst)
-
+        # Delete BEFORE blur so a crash during processing never leaves the original visible.
         try:
             await msg.delete()
         except Exception:
             log.exception("failed to delete flagged document")
             return
+
+        if kind == "photo":
+            await asyncio.to_thread(media.blur_photo, src, dst)
+            blurred_ok = True
+        else:
+            blurred_ok = await media.blur_video(src, dst)
 
         if blurred_ok:
             sender = context.bot.send_photo if kind == "photo" else context.bot.send_video
@@ -782,14 +839,15 @@ async def on_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         dst = os.path.join(tmp, "out.mp4")
         tg_file = await video.get_file()
         await tg_file.download_to_drive(src)
-        blurred_ok = await media.blur_video(src, dst)
 
+        # Delete BEFORE blur so a mid-process crash never leaves the original visible.
         try:
             await msg.delete()
         except Exception:
             log.exception("failed to delete video message")
             return
 
+        blurred_ok = await media.blur_video(src, dst)
         if blurred_ok:
             await context.bot.send_video(
                 chat_id=update.effective_chat.id,

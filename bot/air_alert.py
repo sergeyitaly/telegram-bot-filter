@@ -65,3 +65,8 @@ async def poll(context: ContextTypes.DEFAULT_TYPE) -> None:
             await handlers.activate_alarm(context, chat_id, auto=True)
         elif not now_active and st.alarm_active and st.auto_armed:
             await handlers.deactivate_alarm(context, chat_id)
+        elif now_active and st.alarm_active:
+            # Re-apply lockdown every tick: a native Telegram admin can silently
+            # override group permissions while the alarm is active, downgrading
+            # the proactive media block back to a race. This self-heals it.
+            await handlers.reapply_lockdown(context, chat_id)

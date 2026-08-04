@@ -19,8 +19,12 @@ from bot import store
 
 _CHAT_PERMISSIONS_KEYS = set(inspect.signature(ChatPermissions).parameters.keys())
 
-_CHAT_STATES_KEY = "chat_states"
+_CHAT_STATES_KEY = "chat_states"  # legacy shared key — read-only for migration
 _CLAIMED_ADMINS_KEY = "claimed_admins"
+
+
+def _chat_state_key(chat_id: int) -> str:
+    return f"chat_state:{chat_id}"
 
 
 @dataclass
@@ -79,10 +83,19 @@ async def hydrate() -> None:
     _claimed_admins = {int(chat_id): set(ids) for chat_id, ids in raw_admins.items()}
     _known_chats.update(_claimed_admins.keys())
 
+    # Load per-chat state from individual keys (new format — no concurrent-write race).
+    for chat_id in list(_claimed_admins.keys()):
+        data = await store.get_json(_chat_state_key(chat_id), None)
+        if data:
+            _chats[chat_id] = ChatState.from_json(data)
+
+    # Migration: also load from old shared blob for chats not yet in new format.
     raw_states = await store.get_json(_CHAT_STATES_KEY, {})
-    for chat_id, data in raw_states.items():
-        _chats[int(chat_id)] = ChatState.from_json(data)
-        _known_chats.add(int(chat_id))
+    for chat_id_str, data in raw_states.items():
+        cid = int(chat_id_str)
+        if cid not in _chats:
+            _chats[cid] = ChatState.from_json(data)
+            _known_chats.add(cid)
 
 
 async def _persist_claimed_admins() -> None:
@@ -90,9 +103,9 @@ async def _persist_claimed_admins() -> None:
 
 
 async def _persist_chat_state(chat_id: int) -> None:
-    all_states = await store.get_json(_CHAT_STATES_KEY, {})
-    all_states[str(chat_id)] = _chats[chat_id].to_json()
-    await store.set_json(_CHAT_STATES_KEY, all_states)
+    # Write to a per-chat key so concurrent updates to different chats never
+    # race on a shared blob (old chat_states key was a read-modify-write race).
+    await store.set_json(_chat_state_key(chat_id), _chats[chat_id].to_json())
 
 
 def claimed_admins_for(chat_id: int) -> set[int]:
@@ -105,6 +118,14 @@ def all_claimed_chat_ids() -> set[int]:
 
 async def add_chat_admin(chat_id: int, user_id: int) -> None:
     _claimed_admins.setdefault(chat_id, set()).add(user_id)
+    await _persist_claimed_admins()
+
+
+async def remove_chat_admin(chat_id: int, user_id: int) -> None:
+    if chat_id in _claimed_admins:
+        _claimed_admins[chat_id].discard(user_id)
+        if not _claimed_admins[chat_id]:
+            del _claimed_admins[chat_id]
     await _persist_claimed_admins()
 
 
