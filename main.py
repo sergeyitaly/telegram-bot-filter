@@ -1,4 +1,3 @@
-import asyncio
 import logging
 
 from telegram import Update
@@ -29,8 +28,22 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
+async def _hydrate(_app: Application) -> None:
+    """post_init hook: runs inside the same event loop run_polling manages,
+    right after Application.initialize() and before polling starts. A
+    separate top-level asyncio.run() here would leave nothing for PTB's
+    own asyncio.get_event_loop() call to find afterward — that's exactly
+    what broke the previous deploy (RuntimeError: no current event loop)."""
+    if store.ENABLED:
+        await state.hydrate()
+        await keywords.hydrate()
+        log.info("hydrated state from Redis")
+    else:
+        log.info("Redis persistence disabled (UPSTASH_REDIS_REST_URL/TOKEN not set) — running in-memory only")
+
+
 def build_application() -> Application:
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(_hydrate).build()
 
     # Runs before every other handler; drops updates from unauthorized chats.
     app.add_handler(MessageHandler(filters.ALL, handlers.guard_allowed_chat), group=-1)
@@ -69,18 +82,8 @@ def build_application() -> Application:
     return app
 
 
-async def _hydrate() -> None:
-    if store.ENABLED:
-        await state.hydrate()
-        await keywords.hydrate()
-        log.info("hydrated state from Redis")
-    else:
-        log.info("Redis persistence disabled (UPSTASH_REDIS_REST_URL/TOKEN not set) — running in-memory only")
-
-
 def main() -> None:
     health.start_in_background(PORT)
-    asyncio.run(_hydrate())
     app = build_application()
     log.info("starting polling")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
