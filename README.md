@@ -135,33 +135,54 @@ matches the one region configured — the rest still work fine with manual
 ## Multi-group deployments
 
 One deployed bot (one token) can serve several unrelated Telegram groups
-without their admins seeing each other's activity:
+without their admins seeing each other's activity, and without you having to
+hand-configure every group yourself:
 
-- **`CHAT_ADMINS`** is both the allowlist and the notification map. A chat
-  not listed here isn't served at all — the bot leaves automatically the
-  moment it's added, and DMs the owners who added it. This matters because
-  it's one shared bot: without this, anyone who finds its username could
-  add it to their own group just to see how the filter reacts.
 - Each chat's admins can run `/alarm_on`, `/alarm_off`, `/status`,
   `/addkeyword`, and `/unmute` **only in their own chat**, and only get
   DMs about their own chat's alarm/violation activity — never another
   group's.
 - **`OWNER_IDS`** (you, the deployer) are admin in every chat and are the
-  only ones told about bot-wide security events, like someone trying to
-  add the bot to a chat that isn't authorized.
-- `/allowbot` (whitelisting a bot account so it isn't auto-kicked on join)
-  is owner-only, since it exempts that bot account across every chat this
-  deployment serves — not just the one the command was run in.
+  only ones told about bot-wide security events, like a chat that was
+  added but never claimed.
+- `/allowbot` is owner-only, since it exempts a bot account across every
+  chat this deployment serves — not just the one the command was run in.
 - The keyword list (`/addkeyword`, `bot/keywords.py`) is shared across all
   chats, not per-group — any chat's admin extending it affects filtering
   everywhere.
 
-Example, two groups with different admin teams:
+There are two ways a chat gets onto the allowlist — mix and match:
+
+**Hardcoded (`CHAT_ADMINS`)** — you already know the group and its admins,
+set once in env vars:
 
 ```
 OWNER_IDS=583805446
 CHAT_ADMINS=-1001111111111:222222222; -1002222222222:333333333,444444444
 ```
+
+**Self-service (`INVITE_TOKENS`)** — an admin you trust activates their own
+group without you touching config at all:
+
+1. Generate a token: `python -c "import secrets; print(secrets.token_urlsafe(24))"`
+2. Set `INVITE_TOKENS=<the token>` (comma-separate more than one if you want
+   distinct tokens per person/purpose).
+3. Share the token with the admin privately — Signal, in person — **not**
+   posted in the group itself.
+4. They add the bot to their group. It posts a one-time notice and does
+   nothing else — no filtering, no commands work yet.
+5. They run `/claim <token>` in their group. This only succeeds if the
+   token is valid **and** the Telegram API confirms they're actually an
+   admin of that specific chat — knowing the token alone isn't enough.
+6. Unclaimed within `CLAIM_TIMEOUT_SECONDS` (default 10 min): the bot
+   leaves on its own and DMs the owners.
+7. Once claimed, that admin can add co-admins for their group with
+   `/addadmin <user_id>` — independently, no owner involvement.
+
+Self-claimed admins are **in-memory only** — like alarm state, they don't
+survive a redeploy or a Render free-tier restart, and need a fresh
+`/claim`. Move a group into `CHAT_ADMINS` instead if it needs to survive
+restarts without re-claiming.
 
 ## Tuning the filter
 

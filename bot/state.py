@@ -27,6 +27,38 @@ _known_chats: set[int] = set()
 # Rolling per-(chat, user) violation timestamps for repeat-offender muting.
 _violations: dict[tuple[int, int], list[float]] = {}
 
+# Chats self-activated at runtime via /claim, plus their admins. Merged with
+# the env-configured CHAT_ADMINS at lookup time. In-memory like everything
+# else here: a restart clears it, and the group needs a fresh /claim.
+_claimed_admins: dict[int, set[int]] = {}
+
+# Chats currently in the "added but not yet claimed" window.
+_pending_claims: set[int] = set()
+
+
+def claimed_admins_for(chat_id: int) -> set[int]:
+    return _claimed_admins.get(chat_id, set())
+
+
+def add_chat_admin(chat_id: int, user_id: int) -> None:
+    _claimed_admins.setdefault(chat_id, set()).add(user_id)
+
+
+def is_claimed(chat_id: int) -> bool:
+    return chat_id in _claimed_admins
+
+
+def mark_pending_claim(chat_id: int) -> None:
+    _pending_claims.add(chat_id)
+
+
+def is_pending_claim(chat_id: int) -> bool:
+    return chat_id in _pending_claims
+
+
+def clear_pending_claim(chat_id: int) -> None:
+    _pending_claims.discard(chat_id)
+
 
 def get(chat_id: int) -> ChatState:
     # Every handler touches this, so piggyback chat registration here too —

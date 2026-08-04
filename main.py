@@ -32,6 +32,8 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("addkeyword", handlers.cmd_addkeyword))
     app.add_handler(CommandHandler("allowbot", handlers.cmd_allowbot))
     app.add_handler(CommandHandler("unmute", handlers.cmd_unmute))
+    app.add_handler(CommandHandler("claim", handlers.cmd_claim))
+    app.add_handler(CommandHandler("addadmin", handlers.cmd_addadmin))
 
     app.add_handler(ChatMemberHandler(handlers.on_chat_member_update, ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(ChatMemberHandler(handlers.on_my_chat_member_update, ChatMemberHandler.MY_CHAT_MEMBER))

@@ -34,6 +34,15 @@ OWNER_IDS = _int_list(os.environ.get("OWNER_IDS", ""))
 CHAT_ADMINS = _parse_chat_admins(os.environ.get("CHAT_ADMINS", ""))
 ALLOWED_CHAT_IDS = set(CHAT_ADMINS.keys())
 
+# Shared secrets you hand out privately (Signal, in person, etc.) to admins
+# you trust to self-activate the bot in their own group, without you having
+# to edit CHAT_ADMINS and redeploy for every new chat. A chat still isn't
+# served until someone both knows a valid token AND is verified (via the
+# Telegram API, not just their say-so) as an actual admin of that specific
+# chat — see /claim in bot/handlers.py.
+INVITE_TOKENS = {t.strip() for t in os.environ.get("INVITE_TOKENS", "").split(",") if t.strip()}
+CLAIM_TIMEOUT_SECONDS = int(os.environ.get("CLAIM_TIMEOUT_SECONDS", "600"))
+
 # Bot accounts allowed to join without being auto-kicked (e.g. other moderation
 # bots you deliberately add). Extendable at runtime via /allowbot.
 TRUSTED_BOT_IDS = _int_list(os.environ.get("TRUSTED_BOT_IDS", ""))

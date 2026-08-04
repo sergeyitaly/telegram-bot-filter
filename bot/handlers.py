@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import os
+import secrets
 import tempfile
 from datetime import datetime, timezone
 
@@ -15,6 +16,8 @@ from bot import keywords, media, state
 from bot.config import (
     ALLOWED_CHAT_IDS,
     CHAT_ADMINS,
+    CLAIM_TIMEOUT_SECONDS,
+    INVITE_TOKENS,
     MAX_VIDEO_MB,
     OWNER_IDS,
     TRUSTED_BOT_IDS,
@@ -37,8 +40,9 @@ log = logging.getLogger(__name__)
 
 
 def _admins_for(chat_id: int) -> set[int]:
-    """Owners are admin everywhere; each chat also has its own admin set."""
-    return CHAT_ADMINS.get(chat_id, set()) | OWNER_IDS
+    """Owners are admin everywhere; each chat also has its own admin set —
+    either hardcoded via CHAT_ADMINS, or self-registered via /claim."""
+    return CHAT_ADMINS.get(chat_id, set()) | state.claimed_admins_for(chat_id) | OWNER_IDS
 
 
 def _is_admin(chat_id: int, user_id: int) -> bool:
@@ -46,17 +50,28 @@ def _is_admin(chat_id: int, user_id: int) -> bool:
 
 
 def _is_allowed_chat(chat_id: int) -> bool:
-    return not ALLOWED_CHAT_IDS or chat_id in ALLOWED_CHAT_IDS
+    return chat_id in ALLOWED_CHAT_IDS or state.is_claimed(chat_id)
+
+
+def _is_claim_command(update: Update) -> bool:
+    msg = update.effective_message
+    if not msg or not msg.text:
+        return False
+    return msg.text.split()[0].split("@")[0].lower() == "/claim"
 
 
 async def guard_allowed_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Registered in an earlier handler group than everything else: drops any
-    update from a non-private chat outside ALLOWED_CHAT_IDS before it reaches
-    the filter/command logic. Belt-and-suspenders alongside the auto-leave in
-    on_my_chat_member_update, for the gap between being added and leaving."""
+    update from a non-private chat outside the allowlist before it reaches
+    filter/command logic — except /claim, which is how a chat gets onto the
+    allowlist in the first place. Belt-and-suspenders alongside the
+    auto-leave-if-unclaimed job, for the gap before that job fires."""
     chat = update.effective_chat
-    if chat and chat.type != "private" and not _is_allowed_chat(chat.id):
-        raise ApplicationHandlerStop
+    if not chat or chat.type == "private":
+        return
+    if _is_allowed_chat(chat.id) or _is_claim_command(update):
+        return
+    raise ApplicationHandlerStop
 
 
 def _exposure_seconds(msg) -> float:
@@ -244,20 +259,86 @@ async def cmd_unmute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(f"User {user_id} unmuted.")
 
 
+async def cmd_claim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Self-service activation: requires BOTH a valid invite token AND that
+    the caller is verified (via the Telegram API, not their say-so) as an
+    actual admin/creator of this specific chat — a token alone isn't enough
+    to activate the bot in a chat you don't administer."""
+    chat_id = update.effective_chat.id
+    if update.effective_chat.type == "private" or not state.is_pending_claim(chat_id):
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /claim <token>")
+        return
+
+    token = context.args[0]
+    if not any(secrets.compare_digest(token, valid) for valid in INVITE_TOKENS):
+        await update.message.reply_text("❌ Invalid token.")
+        return
+
+    member = await context.bot.get_chat_member(chat_id, update.effective_user.id)
+    if member.status not in ("administrator", "creator"):
+        await update.message.reply_text("❌ Only a Telegram admin of this group can claim the bot.")
+        return
+
+    state.add_chat_admin(chat_id, update.effective_user.id)
+    state.clear_pending_claim(chat_id)
+    state.register_chat(chat_id)
+    await update.message.reply_text(
+        "✅ Activated. Alarm mode, filtering, and admin commands are now live "
+        "for this group. Add co-admins with /addadmin <user_id>."
+    )
+    await _notify_owners(
+        context,
+        f"✅ Chat {chat_id} ({update.effective_chat.title}) self-claimed by "
+        f"@{update.effective_user.username or '?'} (id {update.effective_user.id}).",
+    )
+
+
+async def cmd_addadmin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    if not _is_admin(chat_id, update.effective_user.id):
+        return
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text("Usage: /addadmin <user_id>")
+        return
+    state.add_chat_admin(chat_id, int(context.args[0]))
+    await update.message.reply_text(f"User {context.args[0]} can now run admin commands in this chat.")
+
+
+async def _leave_if_unclaimed(context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = context.job.data
+    if not state.is_pending_claim(chat_id):
+        return  # claimed (or already left) in the meantime
+    state.clear_pending_claim(chat_id)
+    try:
+        await context.bot.leave_chat(chat_id)
+    except Exception:
+        log.exception("failed to leave unclaimed chat %s", chat_id)
+    await _notify_owners(context, f"⏱️ Chat {chat_id} was never claimed within {CLAIM_TIMEOUT_SECONDS}s — left.")
+
+
 async def on_my_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Track which chats the bot is currently a member of, so the
-    alerts.in.ua poller knows where to (de)activate alarm mode. Also enforces
-    ALLOWED_CHAT_IDS: this is one deployed bot on one token, so anyone could
-    otherwise add it to their own chat to see how the filter behaves — leave
-    immediately instead, and tell the admins who added it."""
+    alerts.in.ua poller knows where to (de)activate alarm mode. Also gates
+    onboarding: this is one deployed bot on one token, so anyone could
+    otherwise add it to their own chat to see how the filter behaves. A newly
+    added chat gets a claim window instead of being served (or left)
+    immediately — see cmd_claim."""
     cmu = update.my_chat_member
     chat_id = cmu.chat.id
 
     if cmu.new_chat_member.status in ("left", "kicked"):
         state.unregister_chat(chat_id)
+        state.clear_pending_claim(chat_id)
         return
 
-    if not _is_allowed_chat(chat_id):
+    if _is_allowed_chat(chat_id):
+        state.register_chat(chat_id)
+        return
+
+    if not INVITE_TOKENS:
+        # No self-service configured at all — fall back to immediate leave.
         adder = cmu.from_user
         try:
             await context.bot.leave_chat(chat_id)
@@ -265,13 +346,24 @@ async def on_my_chat_member_update(update: Update, context: ContextTypes.DEFAULT
             log.exception("failed to leave unauthorized chat %s", chat_id)
         await _notify_owners(
             context,
-            "🔒 Bot was added to an unauthorized chat and left automatically.\n"
+            "🔒 Bot was added to an unauthorized chat and left automatically "
+            "(no INVITE_TOKENS configured, so self-claim is off).\n"
             f"Chat: {cmu.chat.title or cmu.chat.type} (id {chat_id})\n"
             f"Added by: @{adder.username or '?'} (id {adder.id})",
         )
         return
 
-    state.register_chat(chat_id)
+    state.mark_pending_claim(chat_id)
+    try:
+        await context.bot.send_message(
+            chat_id,
+            "🔒 This bot needs to be activated before it will do anything here.\n"
+            f"A Telegram admin of this group must run /claim <token> within "
+            f"{CLAIM_TIMEOUT_SECONDS // 60} minutes, or the bot leaves automatically.",
+        )
+    except Exception:
+        log.exception("failed to post claim instructions in chat %s", chat_id)
+    context.job_queue.run_once(_leave_if_unclaimed, when=CLAIM_TIMEOUT_SECONDS, data=chat_id)
 
 
 async def _track_violation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
