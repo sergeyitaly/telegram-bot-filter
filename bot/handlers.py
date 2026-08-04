@@ -163,9 +163,18 @@ async def activate_alarm(context: ContextTypes.DEFAULT_TYPE, chat_id: int, auto:
 
     lockdown_note = ""
     try:
-        chat = await context.bot.get_chat(chat_id)
-        original = chat.permissions
-        await state.set_saved_permissions(chat_id, original)
+        # Invariant: saved_permissions is non-None iff we're currently holding
+        # a lockdown. Gating capture on that value (not on alarm_active, and
+        # not on whether this looks like the "first" call) means a redundant
+        # activation — double /alarm_on, a race with the auto-poller, anything
+        # a future refactor might add — can never re-read "current" (by then
+        # already-locked) permissions and clobber the true original. Only
+        # deactivate_alarm is allowed to clear it back to None.
+        original = state.get(chat_id).saved_permissions
+        if original is None:
+            chat = await context.bot.get_chat(chat_id)
+            original = chat.permissions
+            await state.set_saved_permissions(chat_id, original)
         await context.bot.set_chat_permissions(
             chat_id,
             ChatPermissions(
