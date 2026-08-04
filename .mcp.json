@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "telegram-bot-api": {
+      "command": "node",
+      "args": [".claude/mcp-servers/telegram-bot-api.mjs"],
+      "env": {
+        "BOT_TOKEN": "${BOT_TOKEN}"
+      }
+    },
+    "fetch": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-fetch"]
+    }
+  }
+}

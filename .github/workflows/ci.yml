@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint and syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt ruff
+
+      - name: Syntax check (all modules)
+        run: |
+          python -m py_compile \
+            bot/__init__.py \
+            bot/config.py \
+            bot/filters.py \
+            bot/handlers.py \
+            bot/keywords.py \
+            bot/media.py \
+            bot/state.py \
+            bot/store.py \
+            bot/air_alert.py \
+            bot/health.py \
+            bot/uptime_check.py \
+            main.py
+
+      - name: Lint with ruff
+        run: ruff check . --select E,W,F --ignore E501,W291,W293
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t telegram-bot-filter .
