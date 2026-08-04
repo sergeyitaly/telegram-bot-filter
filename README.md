@@ -235,9 +235,14 @@ downtime in the first place (see "Keeping it awake" above).
 
 ## Tuning the filter
 
-- Add keywords at runtime (admin only): `/addkeyword слово` (strike-result
+- Add keywords at runtime (chat admin): `/addkeyword слово` (strike-result
   tier) or `/addkeyword назва_району location` (location tier — only fires
-  during alarm mode). Survives a restart if `UPSTASH_REDIS_REST_URL` is set
+  during alarm mode). **List the current keywords: `/listkeywords`, owner-only
+  and DM'd only to whoever ran it** — never posted in a group or shown to
+  chat admins. The filter works because its exact wordlist is hard to see;
+  handing that out to every self-service chat admin (a much wider trust
+  boundary than the deployer) would make it trivial to rephrase around.
+  Survives a restart if `UPSTASH_REDIS_REST_URL` is set
   (see below); otherwise it's in-memory only and silently resets to whatever
   is hardcoded in `bot/keywords.py` on the next redeploy/restart, with no
   warning when that happens.

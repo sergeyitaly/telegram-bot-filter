@@ -246,6 +246,29 @@ async def cmd_addkeyword(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
 
+async def cmd_listkeywords(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Owner-only, DM'd to the caller only (not broadcast to every owner,
+    not visible to chat admins): the exact keyword list is what makes the
+    filter hard to trivially evade by rephrasing around it. Exposing it to
+    every self-service chat admin — a much wider trust boundary than the
+    deployer alone — would defeat that."""
+    if update.effective_user.id not in OWNER_IDS:
+        return
+    if update.effective_chat.type != "private":
+        await _delete_silently(update.effective_message)
+
+    strike = "\n".join(f"• {t}" for t in keywords.STRIKE_TERMS)
+    location = "\n".join(f"• {t}" for t in keywords.LOCATION_TERMS)
+    text = (
+        f"Strike terms ({len(keywords.STRIKE_TERMS)}):\n{strike}\n\n"
+        f"Location terms ({len(keywords.LOCATION_TERMS)}):\n{location}"
+    )
+    try:
+        await context.bot.send_message(chat_id=update.effective_user.id, text=text)
+    except Exception:
+        log.exception("failed to DM keyword list to owner %s", update.effective_user.id)
+
+
 async def cmd_allowbot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Owners only, not per-chat admins: this whitelists a bot across every
     # chat the deployment serves, not just the one the command was run in.

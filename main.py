@@ -40,6 +40,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("alarm_on", handlers.cmd_alarm_on))
     app.add_handler(CommandHandler("alarm_off", handlers.cmd_alarm_off))
     app.add_handler(CommandHandler("addkeyword", handlers.cmd_addkeyword))
+    app.add_handler(CommandHandler("listkeywords", handlers.cmd_listkeywords))
     app.add_handler(CommandHandler("allowbot", handlers.cmd_allowbot))
     app.add_handler(CommandHandler("unmute", handlers.cmd_unmute))
     app.add_handler(CommandHandler("activate", handlers.cmd_activate))
