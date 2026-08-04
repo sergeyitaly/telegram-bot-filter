@@ -11,10 +11,33 @@ confirm a hit or correct aim for a follow-up strike:
   deleted and reposted **blurred** with a warning. Outside alarm mode, only
   media whose caption matches strike-result keywords is blurred.
 - **Live location**: always deleted immediately.
+- **Unauthorized bots**: any bot account that joins without being whitelisted
+  via `/allowbot` is kicked immediately — another bot in the chat can scrape
+  messages independently of us, so it's removed rather than raced. This can't
+  detect human-operated "userbot" scraper accounts; Telegram doesn't expose
+  that distinction to the Bot API.
+- **Repeat offenders**: a member who trips the filter `VIOLATION_THRESHOLD`
+  times within `VIOLATION_WINDOW_SECONDS` is auto-muted pending admin review
+  (`/unmute <user_id>` to lift it).
 
-Alarm mode is toggled per chat by an admin (`/alarm_on`, `/alarm_off`) —
-this MVP does not auto-poll an external air-raid API, admins arm it when a
-strike/alert is happening in their region.
+Alarm mode toggles (`/alarm_on`, `/alarm_off`, `/status`) reply via **admin
+DM**, not in the group, and the triggering command is deleted — so the timing
+of a toggle isn't visible to chat members. Alarm mode can also auto-arm from
+real air-raid status via [alerts.in.ua](https://devs.alerts.in.ua/) (see
+below) instead of relying only on a manual `/alarm_on`.
+
+### Why alarm mode locks permissions instead of just deleting
+
+Deleting a flagged photo/video after the fact still leaves a window where
+anyone already watching the chat — a human, or a bot/userbot scraping it —
+sees it before the delete lands. Telegram delivers a message to every
+member/bot the instant it's posted, independently of when *our* bot reacts,
+so no amount of reaction-speed tuning closes that gap. Instead, `/alarm_on`
+sets chat-wide permissions (`can_send_photos`/`videos`/etc. = false) so
+regular members can't send media **at all** while active — nothing to leak.
+Text stays reactive (keyword-filtered on delete) so coordination is still
+possible during an alert. Admins/the chat owner are always exempt from chat
+permissions by Telegram design, so this only restricts non-admin members.
 
 ## Local setup
 
@@ -48,9 +71,10 @@ runtime can't install (no apt access), so deploy via the included
 1. Push this repo to GitHub.
 2. On Render: **New → Web Service** → connect the repo → environment:
    **Docker** (it will auto-detect the `Dockerfile`).
-3. Set environment variables in the Render dashboard: `BOT_TOKEN`,
-   `ADMIN_IDS`. Leave `PORT` unset — Render injects it automatically and the
-   app reads it from `$PORT`.
+3. Set environment variables in the Render dashboard — see `.env.example`
+   for the full list (`BOT_TOKEN`, `ADMIN_IDS` are required; the rest are
+   optional with sane defaults). Leave `PORT` unset — Render injects it
+   automatically and the app reads it from `$PORT`.
 4. Deploy. The service binds an HTTP server on `$PORT` (`bot/health.py`)
    purely so Render sees an open port and so an uptime pinger has something
    to hit — the bot itself talks to Telegram via long polling, not webhooks.
@@ -76,6 +100,30 @@ periodic forced restart (~monthly) and have a monthly hour cap. If the chat
 needs guaranteed uptime during active shelling, a paid tier or a
 always-on VPS removes that risk entirely.
 
+## Auto-arming alarm mode from real air-raid status
+
+Set `ALERTS_API_TOKEN` and `ALERTS_OBLAST_UID` to auto-arm alarm mode from
+[alerts.in.ua](https://devs.alerts.in.ua/) instead of relying only on manual
+`/alarm_on` — important because Render free instances restart on every cold
+start, and a drone strike can hit with no siren warning at all.
+
+1. Get a free token at https://devs.alerts.in.ua/.
+2. Find your oblast's UID from the same docs (e.g. `31` = м. Київ).
+3. Set `ALERTS_API_TOKEN` and `ALERTS_OBLAST_UID` (and optionally
+   `ALERTS_POLL_SECONDS`, default 60).
+
+Every poll re-syncs every chat the bot is in to the current real-world
+state — not just on a state *change* — so a chat that joins mid-alert, or a
+bot that restarts mid-alert, still ends up correctly armed on the next tick
+rather than waiting for the alert to toggle off and on again. One
+consequence: a manual `/alarm_off` during a still-ongoing real alert gets
+re-armed on the next tick — this is intentional (favors not missing a real
+threat over honoring a stale manual override), not a bug.
+
+Alarm mode set by the poller (`auto_armed`) auto-clears when the real alert
+ends. Alarm mode set manually via `/alarm_on` only clears via manual
+`/alarm_off` — the poller won't touch it.
+
 ## Tuning the filter
 
 - Add keywords at runtime (admin only): `/addkeyword слово` (strike-result
@@ -86,3 +134,7 @@ always-on VPS removes that risk entirely.
   blur is (higher = less recoverable detail).
 - `MAX_VIDEO_MB` skips blurring (falls back to plain delete) above this size,
   to avoid timing out on Render's free CPU allocation.
+- `VIOLATION_THRESHOLD` / `VIOLATION_WINDOW_SECONDS` control repeat-offender
+  auto-muting sensitivity (default: mute after 3 hits in 10 minutes).
+- `TRUSTED_BOT_IDS` (or runtime `/allowbot <bot_id>`) whitelists bot accounts
+  that should be allowed to join without being auto-kicked.
