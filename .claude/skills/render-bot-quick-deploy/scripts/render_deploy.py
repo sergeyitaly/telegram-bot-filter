@@ -10,6 +10,12 @@ the payload" -- the agent invoking this script still owes the user a plain-
 language confirmation first; this flag is the second gate, not a
 replacement for asking.
 
+Any of the env vars below can also come from a `.env` file in the current
+directory (KEY=VALUE per line) instead of being exported in the shell --
+loaded as a fallback only, so an already-exported value always wins. Point
+this at the target bot repo's own .env (if it has RENDER_API_KEY etc.
+already) or wherever you keep those account-level secrets.
+
 Required env vars: RENDER_API_KEY, BOT_TOKEN, OWNER_IDS, REPO_URL,
 SERVICE_NAME
 Optional env vars:
@@ -35,6 +41,7 @@ import json
 import os
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import httpx
 
@@ -43,6 +50,23 @@ UPTIMEROBOT_API = "https://api.uptimerobot.com/v2"
 UPSTASH_API = "https://api.upstash.com/v2"
 
 REQUIRED = ["RENDER_API_KEY", "BOT_TOKEN", "OWNER_IDS", "REPO_URL", "SERVICE_NAME"]
+
+
+def load_dotenv_fallback(path: Path = Path(".env")) -> None:
+    """Fill in os.environ from a .env file for keys not already set --
+    shell-exported values always win. Pure convenience so these don't need
+    re-exporting every run; silently does nothing if the file is absent."""
+    if not path.is_file():
+        return
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
 
 
 def mask(value: str) -> str:
@@ -73,6 +97,7 @@ class Config:
 
 
 def load_config() -> Config | None:
+    load_dotenv_fallback()
     missing = [v for v in REQUIRED if not os.environ.get(v)]
     if missing:
         print(f"Missing required env var(s): {', '.join(missing)}", file=sys.stderr)

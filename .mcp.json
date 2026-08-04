@@ -2,39 +2,23 @@
   "mcpServers": {
     "telegram-bot-api": {
       "command": "node",
-      "args": [".claude/mcp-servers/telegram-bot-api.mjs"],
-      "env": {
-        "BOT_TOKEN": "${BOT_TOKEN}"
-      }
+      "args": [".claude/mcp-servers/telegram-bot-api.mjs"]
     },
     "fetch": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-fetch"]
     },
     "render": {
-      "type": "http",
-      "url": "https://mcp.render.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${RENDER_API_KEY}"
-      }
+      "command": "node",
+      "args": [".claude/mcp-servers/render-mcp.mjs"]
     },
     "upstash": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@upstash/mcp-server@latest",
-        "--email",
-        "${UPSTASH_EMAIL}",
-        "--api-key",
-        "${UPSTASH_API_KEY}"
-      ]
+      "command": "node",
+      "args": [".claude/mcp-servers/upstash-mcp.mjs"]
     },
     "uptimerobot": {
-      "type": "http",
-      "url": "https://mcp.uptimerobot.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${UPTIMEROBOT_API_KEY}"
-      }
+      "command": "node",
+      "args": [".claude/mcp-servers/uptimerobot-mcp.mjs"]
     }
   }
 }

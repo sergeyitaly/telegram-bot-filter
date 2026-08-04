@@ -57,10 +57,13 @@ Render's health check or never stop sleeping.
 
 ## Step 1: Collect what's needed
 
-Five kinds of secret/config, three required, three optional. Ask for
-whichever aren't already in the environment — **use AskUserQuestion or a
-plain chat prompt, never write them into a file that could get committed**
-(check `.gitignore` covers `.env` in the target repo first if in doubt).
+Five kinds of secret/config, three required, three optional. Check whether
+they're already in the environment or in a `.env` file in the current
+directory first — `render_deploy.py` falls back to reading any of them from
+`.env` (shell-exported values still win). Only ask for whichever are
+genuinely missing from both — **use AskUserQuestion or a plain chat prompt,
+never write them into a file that could get committed** (check `.gitignore`
+covers `.env` in the target repo first if in doubt).
 
 | Var | Required | Where to get it |
 |---|---|---|

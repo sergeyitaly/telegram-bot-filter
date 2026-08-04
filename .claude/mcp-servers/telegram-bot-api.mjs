@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 // Telegram Bot API MCP server — no external dependencies required.
 // Uses Node 18+ built-in fetch and implements JSON-RPC/MCP over stdio.
-// Set BOT_TOKEN (or TELEGRAM_BOT_TOKEN) in the environment before starting.
+// Set BOT_TOKEN (or TELEGRAM_BOT_TOKEN) in the environment before starting,
+// or leave it in the repo's (gitignored) .env — loadDotenvFallback below
+// picks up whatever isn't already set in the shell.
+import { loadDotenvFallback } from "./dotenv-util.mjs";
+
+loadDotenvFallback();
 
 const TOKEN = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || "";
 const BASE = `https://api.telegram.org/bot${TOKEN}`;
