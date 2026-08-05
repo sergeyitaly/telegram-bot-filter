@@ -1,5 +1,6 @@
 import logging
 
+import sentry_sdk
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -17,6 +18,7 @@ from bot.config import (
     BOT_TOKEN,
     HEALTH_MONITOR_POLL_SECONDS,
     PORT,
+    SENTRY_DSN,
     UPTIMEROBOT_API_KEY,
     UPTIMEROBOT_MONITOR_ID,
     UPTIMEROBOT_POLL_SECONDS,
@@ -24,6 +26,18 @@ from bot.config import (
 
 logging_utils.configure(level=logging.INFO)
 log = logging.getLogger(__name__)
+
+if SENTRY_DSN:
+    # No AsyncioIntegration: it needs a running event loop to instrument,
+    # and this repo has already had two real crashes from event-loop timing
+    # (see _hydrate below) — not worth the risk for a feature that's pure
+    # error-reporting, not tracing. The default LoggingIntegration (always
+    # on) already turns any log.error()/log.exception() call into a Sentry
+    # event with no extra config, which is all this needs.
+    sentry_sdk.init(dsn=SENTRY_DSN, traces_sample_rate=0.0)
+    log.info("Sentry error tracking enabled")
+else:
+    log.info("Sentry error tracking disabled (SENTRY_DSN not set)")
 
 
 async def _hydrate(_app: Application) -> None:
@@ -42,6 +56,12 @@ async def _hydrate(_app: Application) -> None:
 
 def build_application() -> Application:
     app = Application.builder().token(BOT_TOKEN).post_init(_hydrate).build()
+
+    # Global catch-all for any exception a handler doesn't catch itself.
+    # Without this, PTB logs it internally and moves on — with SENTRY_DSN
+    # set, on_error's log.error(..., exc_info=...) is what actually turns
+    # that into a Sentry event instead of a line nobody reads.
+    app.add_error_handler(handlers.on_error)
 
     # Runs before every other handler; drops updates from unauthorized chats.
     app.add_handler(MessageHandler(filters.ALL, handlers.guard_allowed_chat), group=-1)

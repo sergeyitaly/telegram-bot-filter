@@ -137,6 +137,31 @@ async def notify_all_admins(context: ContextTypes.DEFAULT_TYPE, text: str) -> No
             log.warning("could not DM admin %s (they may need to /start the bot first)", admin_id)
 
 
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Global catch-all PTB calls for any exception a handler didn't catch
+    itself. Logging at ERROR with exc_info is what makes this visible beyond
+    "PTB already logged it internally" — with SENTRY_DSN set (see main.py),
+    the logging integration turns this exact call into a Sentry event with
+    full context instead of a line that only shows up if someone goes
+    looking at Render's log buffer.
+
+    async here is a contract requirement, not a style choice: Application.
+    add_error_handler requires Callable[[object, CCT], Coroutine] — a plain
+    def wouldn't return a coroutine PTB can await, even though this body has
+    nothing to await itself."""
+    chat_id = None
+    user_id = None
+    if isinstance(update, Update):
+        chat_id = update.effective_chat.id if update.effective_chat else None
+        user_id = update.effective_user.id if update.effective_user else None
+    log.error(
+        "unhandled exception in handler: %s",
+        context.error,
+        exc_info=context.error,
+        extra={"chat_id": chat_id, "user_id": user_id},
+    )
+
+
 async def _delete_silently(msg) -> None:
     try:
         await msg.delete()

@@ -115,6 +115,14 @@ HEALTH_MONITOR_POLL_SECONDS = int(os.environ.get("HEALTH_MONITOR_POLL_SECONDS", 
 UPSTASH_REDIS_REST_URL = os.environ.get("UPSTASH_REDIS_REST_URL", "")
 UPSTASH_REDIS_REST_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN", "")
 
+# Optional: send unhandled handler exceptions and ERROR-level logs to Sentry
+# (or any Sentry-protocol-compatible service) instead of only stdout, where
+# nobody sees a failure unless they go looking. bot/logging_utils.py's JSON
+# formatter already makes stdout parseable; this is the difference between
+# "parseable" and "actually alerts someone." Leave empty to disable — the
+# bot runs exactly as before, matching every other optional integration here.
+SENTRY_DSN = os.environ.get("SENTRY_DSN", "")
+
 WARNING_TEXT = (
     "⚠️ Повідомлення видалено. Публікація наслідків ударів (фото/відео/адреси/координати) "
     "під час чи одразу після атаки допомагає ворогу коригувати наведення. "

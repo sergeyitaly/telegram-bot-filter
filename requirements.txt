@@ -2,6 +2,7 @@ python-telegram-bot[job-queue]==21.4
 Pillow==12.3.0
 aiohttp==3.10.5
 httpx==0.27.2
+sentry-sdk==2.66.1
 
 # Optional: voice transcription in grace period (bot/media.py: transcribe_voice).
 # Graceful no-op if not installed — voice messages fall back to admin-notify.

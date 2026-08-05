@@ -148,6 +148,7 @@ ruff check . --select E,W,F --ignore E501
 | `AUTO_KICK_ON_REPORT_THRESHOLD` | No | `false` | Auto-remove on threshold (vs just notify) |
 | `POST_ALARM_GRACE_SECONDS` | No | `7200` | Keyword filter duration after alarm-off |
 | `HEALTH_MONITOR_POLL_SECONDS` | No | `120` | Redis/backlog self-check interval; DMs admins if unhealthy |
+| `SENTRY_DSN` | No | `""` | Send unhandled exceptions/ERROR logs to Sentry — sentry.io, Python project, Settings → Client Keys (DSN) |
 | `PORT` | No | `8080` | HTTP health server port (Render injects this) |
 
 ---

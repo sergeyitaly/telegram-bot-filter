@@ -372,6 +372,14 @@ incident alerts again right away. Unlike `/status` or the per-chat admin
 DMs elsewhere in this bot, these go to **every** chat's admins since the
 underlying issue isn't scoped to one group.
 
+**Complementary, not overlapping**: `health_monitor.py` watches specific
+known conditions (Redis, backlog, rate limits). It has no visibility into
+an actual unhandled exception inside a handler — a bug, not an infra
+problem. Set `SENTRY_DSN` (free tier at sentry.io) to send those to Sentry
+instead of only Render's stdout log buffer, where a real failure is easy to
+miss unless someone happens to go read the logs. Leave it unset to disable;
+nothing else changes.
+
 ## Tuning the filter
 
 - Add keywords at runtime (chat admin): `/addkeyword слово` (strike-result
