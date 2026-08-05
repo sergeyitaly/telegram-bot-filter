@@ -130,6 +130,22 @@ python main.py
 Add the bot to your group and give it **delete messages** and **restrict
 members** admin permissions.
 
+Run the test suite:
+
+```
+pip install -r requirements-dev.txt
+pytest tests/ -v
+```
+
+One-time setup to run the suite automatically before every `git push` (this
+repo has had real production crashes that tests would have caught):
+
+```
+git config core.hooksPath .githooks
+```
+
+Bypass for the rare exception with `git push --no-verify`.
+
 ## Deploying to Render (free tier)
 
 Video blurring needs the `ffmpeg` binary, which Render's native Python
@@ -404,6 +420,12 @@ nothing else changes.
   minutes-seconds (`50°27'N 30°31'E`), and Google Plus Codes (`8G7G+XH`).
 - Map service URLs (Google Maps, Waze, OpenStreetMap, Apple Maps, Yandex Maps,
   2GIS, Maps.me) are detected and blocked unconditionally like coordinates.
+- OCR for text embedded as an image (a screenshot with coordinates typed over
+  it, rather than sent as a caption) is opt-in — uncomment `pytesseract` in
+  `requirements.txt` **and** the matching `tesseract-ocr` block in the
+  `Dockerfile` together to enable (~15 MB added to the image). The call site
+  in `bot/handlers.py:on_photo` already exists either way; disabled by
+  default it's a clean no-op, not a missing feature.
 - `PHOTO_BLUR_RADIUS` / `VIDEO_BLUR_STRENGTH` env vars control how heavy the
   blur is (higher = less recoverable detail).
 - `MAX_VIDEO_MB` skips blurring (falls back to plain delete) above this size,
