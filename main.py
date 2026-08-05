@@ -34,7 +34,20 @@ if SENTRY_DSN:
     # error-reporting, not tracing. The default LoggingIntegration (always
     # on) already turns any log.error()/log.exception() call into a Sentry
     # event with no extra config, which is all this needs.
-    sentry_sdk.init(dsn=SENTRY_DSN, traces_sample_rate=0.0)
+    #
+    # send_default_pii is deliberately NOT enabled: it's meant for request
+    # headers/IPs in web frameworks, which don't apply here (this bot
+    # long-polls, it never receives inbound HTTP requests from end users).
+    #
+    # include_local_variables=False overrides the SDK's own default (True):
+    # a crash inside on_text/on_photo/etc. would otherwise attach a snapshot
+    # of local variables -- including the actual flagged message text,
+    # caption, or OCR output -- to the event sent to Sentry. That's exactly
+    # the kind of third-party exposure this bot exists to prevent (see
+    # CLAUDE.md's security model: the violation audit log is deliberately
+    # text-only and internal for the same reason). The stack trace, file,
+    # line, and exception type are still enough to debug from.
+    sentry_sdk.init(dsn=SENTRY_DSN, traces_sample_rate=0.0, include_local_variables=False)
     log.info("Sentry error tracking enabled")
 else:
     log.info("Sentry error tracking disabled (SENTRY_DSN not set)")
