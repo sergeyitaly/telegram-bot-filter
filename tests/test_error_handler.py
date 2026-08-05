@@ -7,7 +7,6 @@ an error handler that crashes on a malformed update would be a real problem
 import logging
 from unittest.mock import MagicMock
 
-import pytest
 from telegram import Update
 
 from bot import handlers

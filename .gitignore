@@ -3,3 +3,11 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# IDE/extension-vendored skill copies -- not this project's code; would
+# break `ruff check .` in CI (and bloat the repo) if ever accidentally
+# staged with a broad `git add -A`.
+.cursor/
+.kiro/
+.claude/learning/
+.claude/mcp-usage.jsonl

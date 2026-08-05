@@ -43,6 +43,7 @@ This is a wartime safety application. Mistakes can have real consequences. Read 
 | How is logging formatted? | `bot/logging_utils.py` — JSON lines to stdout; pass `extra={"chat_id": ..., ...}` on a log call to add structured fields |
 | How are unhandled exceptions tracked? | `handlers.on_error()`, registered via `app.add_error_handler()` in `main.py` — logs with chat_id/user_id context; becomes a Sentry event automatically if `SENTRY_DSN` is set (opt-in, see CLAUDE.md env vars) |
 | Where are the tests? | `tests/` (pytest) — see "Testing" section below |
+| Why is it shaped this way? | [docs/adr/](../../../docs/adr/) — Architecture Decision Records. [README's diagram](../../../README.md#architecture) for the data-flow picture. |
 
 ---
 
@@ -95,12 +96,22 @@ pip install -r requirements-dev.txt
 pytest tests/ -v
 ```
 
-Or `/deploy-check` for the fuller pre-push ritual (compile-check + tests +
-`build_application()` startup regression test). `.githooks/pre-push` runs
-the suite automatically before every push once enabled via
+Or `/deploy-check` for the fuller pre-push ritual (compile-check + lint +
+tests + `build_application()` startup regression test). `.githooks/pre-push`
+runs pytest and ruff automatically before every push once enabled via
 `git config core.hooksPath .githooks` — don't bypass it with `--no-verify`
 without a real reason; this repo has had two production crashes the suite
-would have caught.
+would have caught, and CI's `ruff check .` has independently caught a lint
+failure (`F401` unused import) that neither the hook nor `/deploy-check`
+were checking for at the time — both do now.
+
+CI (`.github/workflows/ci.yml`) runs `python -m py_compile bot/*.py main.py`
+(a glob, not a hardcoded file list — the hardcoded version silently stopped
+checking new files twice: `health_monitor.py` and `logging_utils.py` were
+both added over several commits before anyone noticed neither was in the
+list), the test suite, and `ruff check .` from repo root. `.cursor/`/`.kiro/`
+are gitignored specifically so a stray `git add -A` can't pull vendored
+skill copies into a commit and break that last check.
 
 When adding a test, follow the pattern in `tests/test_alarm_lockdown.py` or
 `tests/test_health_monitor.py`: a small `Fake*` stand-in for `context.bot`/

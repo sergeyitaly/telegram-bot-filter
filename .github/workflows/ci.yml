@@ -21,20 +21,12 @@ jobs:
         run: pip install -r requirements.txt ruff
 
       - name: Syntax check (all modules)
+        run: python -m py_compile bot/*.py main.py
+
+      - name: Run tests
         run: |
-          python -m py_compile \
-            bot/__init__.py \
-            bot/config.py \
-            bot/filters.py \
-            bot/handlers.py \
-            bot/keywords.py \
-            bot/media.py \
-            bot/state.py \
-            bot/store.py \
-            bot/air_alert.py \
-            bot/health.py \
-            bot/uptime_check.py \
-            main.py
+          pip install -r requirements-dev.txt
+          pytest tests/ -v
 
       - name: Lint with ruff
         run: ruff check . --select E,W,F --ignore E501,W291,W293

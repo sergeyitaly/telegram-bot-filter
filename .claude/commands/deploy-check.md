@@ -19,7 +19,21 @@ pip install -r requirements-dev.txt  # only needed once per venv
 pytest tests/ -v
 ```
 
-## 3. Application build + startup regression test
+## 3. Lint (matches CI exactly — this class of failure has reached CI
+before landing locally, since neither this command nor the pre-push hook
+checked for it until now)
+
+```bash
+pip install -q ruff
+ruff check bot/ main.py tests/ --select E,W,F --ignore E501,W291,W293
+```
+
+Scoped to this project's own tracked code, not repo root — untracked
+IDE-vendored directories (`.cursor/`, `.kiro/`) can otherwise produce
+unrelated noise if they exist locally; CI's `ruff check .` only ever sees
+tracked files regardless, since it runs from a fresh checkout.
+
+## 4. Application build + startup regression test
 
 Confirms `build_application()` wires all handlers without error and that
 the process reaches a real Telegram API call on startup (catches
@@ -40,10 +54,10 @@ a real network call, not that something is broken. A `RuntimeError` about
 the event loop, or any traceback before reaching the network call, is the
 actual failure mode this step exists to catch.
 
-## 4. Report
+## 5. Report
 
-Summarize pass/fail for each of the three steps. If any step fails, do not
-proceed to commit/push — fix the failure first. If all three pass, note
-that `git push` will additionally run the full suite again via the
+Summarize pass/fail for each of the four steps. If any step fails, do not
+proceed to commit/push — fix the failure first. If all four pass, note
+that `git push` will additionally run tests + ruff again via the
 `pre-push` git hook (`.githooks/pre-push`, enabled via
 `git config core.hooksPath .githooks`) as a final backstop.

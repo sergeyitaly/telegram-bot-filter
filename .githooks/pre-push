@@ -24,3 +24,16 @@ if ! python -m pytest tests/ -q; then
   echo "pre-push: tests failed -- push aborted. Fix them, or use --no-verify to bypass." >&2
   exit 1
 fi
+
+if command -v ruff >/dev/null 2>&1; then
+  # Matches CI's `ruff check .` but scoped to this project's own tracked
+  # code -- untracked IDE-vendored directories (.cursor/, .kiro/) can
+  # otherwise produce unrelated noise locally that CI would never see.
+  if ! ruff check bot/ main.py tests/ --select E,W,F --ignore E501,W291,W293; then
+    echo "" >&2
+    echo "pre-push: ruff failed -- push aborted. Fix it, or use --no-verify to bypass." >&2
+    exit 1
+  fi
+else
+  echo "pre-push: ruff not installed, skipping lint (pip install ruff to enable)" >&2
+fi

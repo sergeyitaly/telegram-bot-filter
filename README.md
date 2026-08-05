@@ -4,6 +4,40 @@ A Telegram moderation bot for Ukrainian community chats. It removes content
 posted during/after drone or missile strikes that could help an attacker
 confirm a hit or correct aim for a follow-up strike:
 
+## Architecture
+
+```mermaid
+flowchart TD
+    Telegram["Telegram Bot API"] <-->|long polling| App["PTB Application<br/>main.py"]
+    App --> Handlers["Handlers<br/>bot/handlers.py"]
+    Handlers --> Classify["Classify text/media<br/>filters.py + keywords.py"]
+    Handlers --> Media["Blur photo/video<br/>bot/media.py"]
+    Handlers <--> State["State<br/>bot/state.py"]
+    State <--> Redis[("Upstash Redis")]
+
+    Alerts["alerts.in.ua"] --> AirPoll["Air Alert Poller<br/>bot/air_alert.py"]
+    AirPoll -->|activate_alarm / deactivate_alarm| Handlers
+
+    HealthMon["Health Monitor<br/>bot/health_monitor.py"] --> State
+    HealthMon --> Redis
+    HealthMon -->|notify_all_admins| Telegram
+
+    UptimeRobot["UptimeRobot"] --> UptimeCheck["Uptime Check<br/>bot/uptime_check.py"]
+    UptimeCheck -->|notify_owners| Telegram
+    UptimeRobot -.pings.-> HealthEP["/health<br/>bot/health.py"]
+
+    Handlers -->|unhandled exception| OnError["on_error"]
+    OnError -.->|if SENTRY_DSN set| Sentry["Sentry"]
+```
+
+Three independent background pollers (`air_alert`, `health_monitor`,
+`uptime_check`) run alongside the main update loop via PTB's `job_queue` —
+none of them block message handling. See [ADR-0001](docs/adr/0001-long-polling-vs-webhooks.md)
+for why this is long-polling rather than a webhook, and the
+**[Architecture Decision Records](docs/adr/)** for the reasoning behind the
+rest of the shape above (Redis choice, permission-based lockdown, why
+links get blocked, admin onboarding, the audit-log-not-auto-report design).
+
 - **Text**: deletes messages containing strike-result keywords (приліт,
   влучання, наслідки удару, бавовна, шахед, прилетіло, жахнуло, etc.) or
   address/location chatter, while alarm mode is active **or** within

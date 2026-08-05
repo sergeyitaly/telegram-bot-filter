@@ -28,6 +28,13 @@ Ukrainian wartime Telegram moderation bot. Removes content (coordinates, strike-
 
 `https://github.com/sergeyitaly/telegram-bot-filter` — branch `main` is production.
 
+**Architecture**: see [README.md's diagram](README.md#architecture) for the
+data-flow overview, and [docs/adr/](docs/adr/) for *why* it's shaped this
+way (long polling vs webhooks, Redis choice, permission-based lockdown,
+link blocking, admin onboarding, audit-log-not-auto-escalation) — the
+reasoning behind a decision, not just the decision, so a future change
+doesn't accidentally re-litigate or silently undo it.
+
 ---
 
 ## File map
@@ -38,13 +45,15 @@ Ukrainian wartime Telegram moderation bot. Removes content (coordinates, strike-
 | `bot/config.py` | All env-var parsing — single source of truth for configuration |
 | `bot/keywords.py` | Strike/location keyword lists + coordinate regex; supports runtime extension via `/addkeyword` |
 | `bot/filters.py` | Stateless classification: `classify_text` / `classify_media`; Unicode normalization; optional OCR |
-| `bot/handlers.py` | All Telegram update handlers, alarm lifecycle, violation tracking, admin commands |
+| `bot/handlers.py` | All Telegram update handlers, alarm lifecycle, violation tracking, admin commands, `on_error` |
 | `bot/state.py` | Per-chat alarm state + per-user violation tracking + claimed admins; Redis write-through |
-| `bot/store.py` | Thin Upstash Redis REST client; no-op when `UPSTASH_*` vars not set |
+| `bot/store.py` | Thin Upstash Redis REST client (pooled `httpx.AsyncClient`); no-op when `UPSTASH_*` vars not set |
 | `bot/media.py` | Pillow photo blur + ffmpeg async video blur |
 | `bot/air_alert.py` | Polls alerts.in.ua and auto-arms/disarms alarm mode each tick |
 | `bot/health.py` | Minimal aiohttp HTTP server on `$PORT` — Render health ping and uptime monitor target |
 | `bot/uptime_check.py` | Polls UptimeRobot and DMs owners about completed downtime periods |
+| `bot/health_monitor.py` | Polls Redis health/update-backlog/rate-limit trips; DMs every chat's admins if unhealthy |
+| `bot/logging_utils.py` | JSON log formatter (stdout) — `extra={...}` on a log call adds structured fields |
 
 ---
 
