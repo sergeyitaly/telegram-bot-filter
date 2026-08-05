@@ -207,7 +207,7 @@ async def activate_alarm(context: ContextTypes.DEFAULT_TYPE, chat_id: int, auto:
             use_independent_chat_permissions=True,
         )
     except BadRequest as exc:
-        log.warning("could not restrict media in chat %s: %s", chat_id, exc)
+        log.warning("could not restrict media in chat %s: %s", chat_id, exc, extra={"chat_id": chat_id, "event": "lockdown_failed"})
         lockdown_note = (
             f"⚠️ Alarm ON у чаті {chat_id}, але не вдалось заблокувати медіа "
             f"({exc.message}). Ймовірно, базова група — оновіть до supergroup. "
@@ -234,7 +234,7 @@ async def deactivate_alarm(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> 
                 chat_id, st.saved_permissions, use_independent_chat_permissions=True
             )
         except BadRequest as exc:
-            log.warning("could not restore permissions in chat %s: %s", chat_id, exc)
+            log.warning("could not restore permissions in chat %s: %s", chat_id, exc, extra={"chat_id": chat_id, "event": "restore_failed"})
             restore_note = f"⚠️ Alarm OFF у чаті {chat_id}, але не вдалось відновити права чату ({exc.message}) — перевірте вручну."
         else:
             # Only clear the saved original once it's actually been restored.

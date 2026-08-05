@@ -16,6 +16,10 @@ log = logging.getLogger(__name__)
 
 _ACTIVE_ALERTS_URL = "https://api.alerts.in.ua/v1/alerts/active.json"
 
+# One pooled client for the process lifetime instead of a new TCP+TLS
+# handshake every ALERTS_POLL_SECONDS tick.
+_client = httpx.AsyncClient(timeout=10)
+
 # Logged only on change, so a steady state doesn't spam the log every tick.
 _last_logged_active: bool | None = None
 
@@ -24,10 +28,9 @@ async def _fetch_oblast_air_raid_active() -> bool:
     """True if ANY watched UID has an active air_raid alert — some oblasts
     are one UID, others are split per-raion, so "the whole oblast" can mean
     several UIDs (see ALERTS_OBLAST_UIDS)."""
-    async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.get(_ACTIVE_ALERTS_URL, params={"token": ALERTS_API_TOKEN})
-        resp.raise_for_status()
-        data = resp.json()
+    resp = await _client.get(_ACTIVE_ALERTS_URL, params={"token": ALERTS_API_TOKEN})
+    resp.raise_for_status()
+    data = resp.json()
     for alert in data.get("alerts", []):
         if (
             alert.get("alert_type") == "air_raid"

@@ -20,24 +20,27 @@ log = logging.getLogger(__name__)
 
 _API_URL = "https://api.uptimerobot.com/v2/getMonitors"
 
+# One pooled client for the process lifetime instead of a new TCP+TLS
+# handshake every UPTIMEROBOT_POLL_SECONDS tick.
+_client = httpx.AsyncClient(timeout=10)
+
 # datetime (unix ts) of the most recent down-period we've already reported,
 # so the same event isn't DM'd again on every subsequent poll.
 _last_reported_at: int | None = None
 
 
 async def _fetch_latest_down_log() -> dict | None:
-    async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.post(
-            _API_URL,
-            data={
-                "api_key": UPTIMEROBOT_API_KEY,
-                "monitors": UPTIMEROBOT_MONITOR_ID,
-                "logs": "1",
-                "format": "json",
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
+    resp = await _client.post(
+        _API_URL,
+        data={
+            "api_key": UPTIMEROBOT_API_KEY,
+            "monitors": UPTIMEROBOT_MONITOR_ID,
+            "logs": "1",
+            "format": "json",
+        },
+    )
+    resp.raise_for_status()
+    data = resp.json()
 
     if data.get("stat") != "ok":
         log.warning("uptimerobot API returned non-ok: %s", data)

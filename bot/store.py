@@ -26,6 +26,14 @@ ENABLED = bool(UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN)
 
 _HEADERS = {"Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}"}
 
+# One pooled client for the process lifetime instead of a new TCP+TLS
+# handshake per call — every chat_state write and every hydrate-on-startup
+# read goes through this, so the per-call setup cost was real, not
+# theoretical. Constructing httpx.AsyncClient does no I/O itself (connections
+# are opened lazily on first request), so a module-level instance is safe
+# without needing an active event loop at import time.
+_client = httpx.AsyncClient(timeout=10)
+
 # Tracked so bot/health_monitor.py can DM admins when Redis is unreachable or
 # over quota (free-tier daily request/size limits) instead of every write
 # silently degrading to in-memory-only with nobody noticing.
@@ -61,12 +69,11 @@ async def get_json(key: str, default):
     if not ENABLED:
         return default
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{UPSTASH_REDIS_REST_URL}/get/{key}", headers=_HEADERS)
-            resp.raise_for_status()
-            result = resp.json().get("result")
+        resp = await _client.get(f"{UPSTASH_REDIS_REST_URL}/get/{key}", headers=_HEADERS)
+        resp.raise_for_status()
+        result = resp.json().get("result")
     except Exception as exc:
-        log.exception("redis get failed for key %s — using default", key)
+        log.exception("redis get failed for key %s — using default", key, extra={"redis_key": key})
         _record_failure(str(exc))
         return default
     _record_success()
@@ -76,7 +83,7 @@ async def get_json(key: str, default):
     try:
         return json.loads(result)
     except (TypeError, ValueError):
-        log.warning("redis value for %s wasn't valid JSON — using default", key)
+        log.warning("redis value for %s wasn't valid JSON — using default", key, extra={"redis_key": key})
         return default
 
 
@@ -84,15 +91,14 @@ async def set_json(key: str, value) -> None:
     if not ENABLED:
         return
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(
-                f"{UPSTASH_REDIS_REST_URL}/set/{key}",
-                headers=_HEADERS,
-                content=json.dumps(value),
-            )
-            resp.raise_for_status()
+        resp = await _client.post(
+            f"{UPSTASH_REDIS_REST_URL}/set/{key}",
+            headers=_HEADERS,
+            content=json.dumps(value),
+        )
+        resp.raise_for_status()
     except Exception as exc:
-        log.exception("redis set failed for key %s — change is in-memory only", key)
+        log.exception("redis set failed for key %s — change is in-memory only", key, extra={"redis_key": key})
         _record_failure(str(exc))
         return
     _record_success()

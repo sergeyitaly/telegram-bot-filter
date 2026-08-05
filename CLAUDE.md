@@ -84,6 +84,19 @@ docker build -t telegram-bot-filter .
 docker run --env-file .env telegram-bot-filter
 ```
 
+Run the test suite:
+```bash
+pip install -r requirements-dev.txt
+pytest tests/ -v
+```
+
+One-time setup to run tests automatically before every `git push` (this repo
+has had two real production crashes that the test suite would have caught):
+```bash
+git config core.hooksPath .githooks
+```
+Bypass for the rare exception with `git push --no-verify`.
+
 ---
 
 ## Common development tasks

@@ -8,3 +8,9 @@ httpx==0.27.2
 # Adds ~150 MB to the image (ctranslate2 + Whisper base model downloaded on
 # first use to ~/.cache/huggingface).  Uncomment to enable:
 # faster-whisper==1.1.1
+
+# Optional: OCR for coordinates/keywords embedded as image text (bot/filters.py:
+# ocr_image, already called from on_photo). Graceful no-op if not installed.
+# Also requires the tesseract-ocr system package -- uncomment the matching
+# block in the Dockerfile at the same time. Uncomment to enable:
+# pytesseract==0.3.13

@@ -152,6 +152,9 @@ Invoke these in any Claude Code session inside this repo:
 | `/security-audit` | Red-team audit of recent changes; updates attack surface table |
 | `/filter-test` | Run battery of classify_text / normalize / coordinate tests |
 | `/update-docs` | Sync CLAUDE.md, SKILL.md, and README after significant changes |
+| `/deploy-check` | Pre-push smoke test: compile-check, full test suite, build_application() startup regression test |
+| `/render-status` | Live deploy status + recent logs via the `render` MCP |
+| `/redis-inspect` | Browse persisted Redis state (alarm/lockdown, admins, violations) via the `upstash` MCP |
 
 ---
 

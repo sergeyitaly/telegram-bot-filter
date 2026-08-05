@@ -1,0 +1,6 @@
+# Shell scripts must keep LF line endings regardless of the checkout
+# platform's core.autocrlf -- a CRLF shebang line (#!/usr/bin/env bash\r)
+# fails with "bad interpreter" on Linux/Mac, and can trip up git's own
+# hook runner even on Windows.
+.githooks/* text eol=lf
+*.sh text eol=lf

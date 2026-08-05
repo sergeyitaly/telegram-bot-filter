@@ -9,7 +9,7 @@ from telegram.ext import (
     filters,
 )
 
-from bot import air_alert, handlers, health, health_monitor, keywords, state, store, uptime_check
+from bot import air_alert, handlers, health, health_monitor, keywords, logging_utils, state, store, uptime_check
 from bot.config import (
     ALERTS_API_TOKEN,
     ALERTS_OBLAST_UIDS,
@@ -22,10 +22,7 @@ from bot.config import (
     UPTIMEROBOT_POLL_SECONDS,
 )
 
-logging.basicConfig(
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    level=logging.INFO,
-)
+logging_utils.configure(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 

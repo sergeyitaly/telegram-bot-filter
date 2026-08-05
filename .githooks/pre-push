@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Runs the test suite before allowing a push to any remote. This repo's
+# history includes two real production crashes from changes that looked
+# fine on read but broke on first run (an event-loop bug, a ChatPermissions
+# constructor mismatch) -- both would have been caught by the existing
+# tests. Bypass with `git push --no-verify` for the rare exception (a
+# docs-only push while the venv is mid-reinstall); that should stay the
+# exception, not the norm.
+set -e
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+if [ ! -d ".venv" ]; then
+  echo "pre-push: no .venv found, skipping test run (create one: python -m venv .venv)" >&2
+  exit 0
+fi
+
+# shellcheck disable=SC1091
+source .venv/Scripts/activate 2>/dev/null || source .venv/bin/activate
+
+if ! python -m pytest tests/ -q; then
+  echo "" >&2
+  echo "pre-push: tests failed -- push aborted. Fix them, or use --no-verify to bypass." >&2
+  exit 1
+fi
