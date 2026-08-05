@@ -39,6 +39,10 @@ This is a wartime safety application. Mistakes can have real consequences. Read 
 | How do violations work? | `handlers._track_violation()` → `state.log_violation()` + `state.record_violation()` |
 | What message types are handled? | PHOTO, VIDEO, VIDEO_NOTE, Document.ALL, TEXT, LOCATION, ANIMATION + catch-all |
 | What types are NOT handled? | VOICE (deleted in alarm), Venue (→ on_location), Poll (deleted in alarm) |
+| How is bot-wide health checked? | `bot/health_monitor.py` — polls Redis health, PTB update-queue depth, and aggregate rate-limit trips every `HEALTH_MONITOR_POLL_SECONDS`; DMs via `handlers.notify_all_admins()` (owners + every chat's admins, not just one chat) |
+| How is logging formatted? | `bot/logging_utils.py` — JSON lines to stdout; pass `extra={"chat_id": ..., ...}` on a log call to add structured fields |
+| How are unhandled exceptions tracked? | `handlers.on_error()`, registered via `app.add_error_handler()` in `main.py` — logs with chat_id/user_id context; becomes a Sentry event automatically if `SENTRY_DSN` is set (opt-in, see CLAUDE.md env vars) |
+| Where are the tests? | `tests/` (pytest) — see "Testing" section below |
 
 ---
 
@@ -70,6 +74,9 @@ After editing, redeploy. Runtime `/addkeyword <term>` also works (persists to Re
 
 ### Debug Redis state (local)
 
+Fastest path: `/redis-inspect` (uses the `upstash` MCP if connected). Manual
+fallback:
+
 ```bash
 # Set env vars from .env first, then:
 curl "$UPSTASH_REDIS_REST_URL/get/claimed_admins" \
@@ -80,6 +87,26 @@ curl "$UPSTASH_REDIS_REST_URL/get/chat_state:-1001234567890" \
 ```
 
 Or use the `telegram-bot-api` MCP: `tg_get_chat chat_id="-1001234567890"` to check live chat permissions.
+
+### Run the test suite
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests/ -v
+```
+
+Or `/deploy-check` for the fuller pre-push ritual (compile-check + tests +
+`build_application()` startup regression test). `.githooks/pre-push` runs
+the suite automatically before every push once enabled via
+`git config core.hooksPath .githooks` — don't bypass it with `--no-verify`
+without a real reason; this repo has had two production crashes the suite
+would have caught.
+
+When adding a test, follow the pattern in `tests/test_alarm_lockdown.py` or
+`tests/test_health_monitor.py`: a small `Fake*` stand-in for `context.bot`/
+`context.application` (no real Telegram/network calls), state cleared via an
+`autouse` fixture between tests, assertions on the actual object mutated
+(e.g. `bot._permissions`) rather than just "did it raise."
 
 ### Test keyword detection (no bot token needed)
 
@@ -101,11 +128,18 @@ print(v.flagged, v.reason)  # True, "coordinates shared"
 
 ### Deploy to Render
 
-1. Push to `main` — Render auto-builds from `Dockerfile`
+0. Run `/deploy-check` first — don't push on the strength of "looks right"
+1. Push to `main` — Render auto-builds from `Dockerfile`; `.githooks/pre-push`
+   runs the test suite as a final gate if enabled
 2. Required env vars: `BOT_TOKEN`, `OWNER_IDS`
-3. Recommended: `UPSTASH_REDIS_REST_URL` + `_TOKEN` (state survives redeploys)
+3. Recommended: `UPSTASH_REDIS_REST_URL` + `_TOKEN` (state survives redeploys),
+   `SENTRY_DSN` (unhandled exceptions become alerts, not just log lines)
 4. For auto-alarm: `ALERTS_API_TOKEN` + `ALERTS_OBLAST_UID`
 5. Set UptimeRobot to ping `/health` every 5 min (prevents Render free-tier sleep)
+
+Deploying a *different* bot (not this one) from zero on Render — new
+service, dedicated Upstash database, UptimeRobot monitor, all via API —
+use the `render-bot-quick-deploy` skill instead, not this checklist.
 
 ---
 
@@ -143,6 +177,26 @@ print(v.flagged, v.reason)  # True, "coordinates shared"
 
 ---
 
+## Known operational bugs (fixed) — not attacks, just real incidents
+
+These broke the bot's own moderation mechanics for legitimate admins, no
+adversary required. Distinct from the attack-surface table above (that's
+about content bypassing the filter; this is about the filter itself
+malfunctioning).
+
+| Bug | Status |
+|---|---|
+| `activate_alarm` re-captured "current" permissions on every call, including redundant ones — a double `/alarm_on` (or a race with the auto-poller) could capture the already-locked state as the "original," so `/alarm_off` restored the chat right back to locked, permanently | FIXED — capture gated on `saved_permissions is None`, not call order; see `tests/test_alarm_lockdown.py`. Found via live testing against the real bot/chat, not code review — the test group was actually stuck locked. |
+| `deactivate_alarm` cleared `saved_permissions` even when the restore API call failed (`BadRequest`), losing the true original the same way | FIXED — only clears on a successful restore; `tests/test_alarm_lockdown.py::test_failed_restore_keeps_saved_permissions_for_retry` |
+| `ChatPermissions.__init__()` rejected `can_send_media_messages` (a legacy field present in `ChatPermissions.to_dict()` output) when reconstructing `saved_permissions` from Redis on startup — crashed the whole process on every deploy while any chat had a saved lockdown | FIXED — `bot/state.py::ChatState.from_json` filters to `inspect.signature(ChatPermissions).parameters` before unpacking |
+| `asyncio.run(_hydrate())` before `app.run_polling()` closed the event loop PTB needed, crashing startup | FIXED — hydration moved into PTB's own `post_init` hook (`main.py::_hydrate`), which runs inside the loop `run_polling` manages |
+
+If you touch `activate_alarm`/`deactivate_alarm`/`ChatState.from_json`/the
+`post_init` wiring, run `tests/test_alarm_lockdown.py` specifically — this
+exact class of bug has bitten this codebase twice already.
+
+---
+
 ## Custom slash commands
 
 Invoke these in any Claude Code session inside this repo:
@@ -176,6 +230,19 @@ Things that MUST trigger a skill update:
 - New env var added (update CLAUDE.md env vars table)
 - New attack vector found or fixed (update attack surface table)
 - New custom slash command added (update commands table above)
+- New operational bug found/fixed, especially via live testing rather than
+  code review (update "Known operational bugs" table)
+- New test file added (mention it in the "Run the test suite" section)
+- New MCP server added (update CLAUDE.md's MCP servers table; note here too
+  if it backs a specific workflow, like `render`/`upstash` do for deploy)
+
+Concretely observed failure mode: updating CLAUDE.md every time (it's what
+gets read back into the *next* agent turn) while treating this file and
+README as optional, "update when it feels big enough." That's how this file
+went stale for an entire session's worth of changes (health_monitor.py,
+logging_utils.py, Sentry, the tests/ directory, two real production bugs)
+despite CLAUDE.md staying current the whole time. Check all three, every
+time — not just the one that happens to be in context already.
 
 ---
 
